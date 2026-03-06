@@ -25,15 +25,24 @@ public:
         : m_captureOptions(options),
 		m_dataSourceCache(dataSourceCache)
     {
-        m_metadata = std::span<const std::byte>(
+ /*       m_metadata = std::span<const std::byte>(
             static_cast<const std::byte*>(data.Data) + data.MetadataOffset,
 			sizeof(PACKETMONITOR_STREAM_METADATA));
 
         m_packet = std::span<const std::byte>(
             static_cast<const std::byte*>(data.Data) + data.PacketOffset,
-			data.PacketLength);
+			data.PacketLength);*/
+        m_metadata.reserve(sizeof(PACKETMONITOR_STREAM_METADATA));
+        m_metadata.assign(
+            static_cast<const std::byte*>(data.Data) + data.MetadataOffset,
+            static_cast<const std::byte*>(data.Data) + data.MetadataOffset + sizeof(PACKETMONITOR_STREAM_METADATA));
 
-        m_packetLength = data.PacketLength;
+        m_packet.reserve(data.DataSize);
+        m_packet.assign(
+            static_cast<const std::byte*>(data.Data) + data.PacketOffset,
+            static_cast<const std::byte*>(data.Data) + data.PacketOffset + data.DataSize);
+
+        m_packetLength = data.DataSize;
         m_missedWrite = data.MissedPacketWriteCount;
         m_missedRead = data.MissedPacketReadCount;
     }
@@ -52,7 +61,7 @@ public:
 	}
     
     void printMetadata(std::ostringstream& oss){
-		auto metadata = getMetadata();
+        auto metadata = getMetadata();
         oss << "======================================================\n";
         if (m_captureOptions->showDetailedMetadata) {
             oss << "Timestamp:        " << formatTimestamp(metadata.TimeStamp) << "\n";
@@ -64,6 +73,7 @@ public:
             if (m_dataSourceCache->size()) {
                 std::wstring componentName = m_dataSourceCache->getComponentName(metadata.ComponentId);
                 std::string componentStr;
+
                 if (!componentName.empty()) {
                     int size = WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, nullptr, 0, nullptr, nullptr);
                     if (size > 0) {
@@ -73,28 +83,30 @@ public:
                 }
                 oss << "Component:        " << std::left <<
                     (componentStr + " (ID:" + std::to_string(metadata.ComponentId) + ")") << "\n";
-
             }
             else {
-                oss << "Component: " << std::setw(31) << metadata.ComponentId << "\n";
+                oss << "Component:        " << std::setw(31) << metadata.ComponentId << "\n";
             }
             oss << "Edge ID:          " << std::dec << metadata.EdgeId << "\n";
             oss << "Filter ID:        " << std::dec << metadata.FilterId << "\n";
             oss << "Processor:        " << std::dec << metadata.Processor << "\n";
-            if (metadata.DropReason != 0) {
-                oss << "!!!! Drop Reason   : " << static_cast<PKTMON_DROP_REASON>(metadata.DropReason) << "\n";
-                oss << "!!!! Drop Location : " << static_cast<PKTMON_DROP_LOCATION>(metadata.DropLocation) << "\n";
-            }
         }
         else {
             oss << "Timestamp: " << std::left << std::setw(30) << formatTimestamp(metadata.TimeStamp) << "\n";
             oss << "Packet:    " << std::setw(8) << std::dec << metadata.PktGroupId << "\n";
             if (m_dataSourceCache->size()) {
                 std::wstring componentName = m_dataSourceCache->getComponentName(metadata.ComponentId);
-                std::string componentStr(componentName.begin(), componentName.end());
+                std::string componentStr;
+
+                if (!componentName.empty()) {
+                    int size = WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, nullptr, 0, nullptr, nullptr);
+                    if (size > 0) {
+                        componentStr.resize(size - 1);
+                        WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, &componentStr[0], size, nullptr, nullptr);
+                    }
+                }
                 oss << "Component: " << std::left <<
                     (componentStr + " (ID:" + std::to_string(metadata.ComponentId) + ")") << "\n";
-
             }
             else {
                 oss << "Component: " << std::setw(31) << metadata.ComponentId << "\n";
@@ -108,7 +120,6 @@ public:
         }
 
         oss << "======================================================" << std::endl;
-
     }
 
     void printPacketData(std::ostringstream& oss) {
@@ -131,8 +142,8 @@ public:
 
 private:
 
-    std::span<const std::byte> m_metadata{};
-    std::span<const std::byte> m_packet{};
+    std::vector<std::byte> m_metadata{};
+    std::vector<std::byte> m_packet{};
 
     uint32_t m_packetLength{};
     uint32_t m_missedWrite{};

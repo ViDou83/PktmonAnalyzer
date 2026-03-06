@@ -18,15 +18,13 @@
 // Dedicated output thread - uses lock-free RingBuffer for messages
 void outputThreadFunc(const std::shared_ptr<RingBuffer<std::string>>& outputQueue,
                       std::atomic<bool>& running) {
-    while (running.load(std::memory_order_acquire) || true) {
+    while (running.load(std::memory_order_acquire) || !outputQueue->empty()) {
         if (auto msg = outputQueue->tryPop()) {
-            std::cout << *msg;
-        }
-        else {
-            if (!running.load(std::memory_order_acquire)) {
-                break;  // Exit only when stopped AND queue is empty
+            if (msg != std::nullopt) {
+                std::cout << *msg;
             }
-            std::this_thread::sleep_for(std::chrono::microseconds(10));
+        } else {
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
     }
 }
@@ -52,7 +50,7 @@ void printDataSources() {
 void processPacket(const std::shared_ptr<RingBuffer<Pktmon::PacketData>>& packetRingBuffer,
                    const std::shared_ptr<RingBuffer<std::string>>& outputRingBuffer,
                    const std::chrono::steady_clock::time_point& endTime) {
-    while (std::chrono::steady_clock::now() < endTime) {
+    while (!outputRingBuffer->empty() || std::chrono::steady_clock::now() < endTime) {
         if (auto entry = packetRingBuffer->tryPop()) {
             // Got a packet - process it
             std::ostringstream oss;
@@ -63,8 +61,7 @@ void processPacket(const std::shared_ptr<RingBuffer<Pktmon::PacketData>>& packet
 
             std::string output = oss.str();
             outputRingBuffer->tryPush(std::move(output));
-        }
-        else {
+        } else {
             // Buffer empty - wait a bit before checking again (avoid busy-spin)
             std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
@@ -72,87 +69,94 @@ void processPacket(const std::shared_ptr<RingBuffer<Pktmon::PacketData>>& packet
 }
 
 static void run(const std::shared_ptr<CaptureOptions>& options) {
-    // Original single-threaded implementation
-    try {
-        auto& api = Pktmon::ApiManager::getInstance();
-        api.initialize(PACKETMONITOR_API_VERSION_1_0);
+    if (!options->useMultiThreaded) {
+        std::cout << "Running in multi-threaded mode with " << options->numConsumerThreads << " consumer threads\n";
+	} else {
+        // Original single-threaded implementation
+        try {
+            auto& api = Pktmon::ApiManager::getInstance();
+            api.initialize(PACKETMONITOR_API_VERSION_1_0);
 
-        auto session = api.createSession(L"MyCapture Session");
+            auto session = api.createSession(L"MyCapture Session");
 
-		auto packetRingBuffer = std::make_shared<RingBuffer<Pktmon::PacketData>>(options->ringBufferSize);
+            auto packetRingBuffer = std::make_shared<RingBuffer<Pktmon::PacketData>>(options->ringBufferSize);
 
-        auto ringBufferHandler = std::make_shared<Pktmon::RingBufferHandler>(
-            packetRingBuffer, options, api.getDataSourceCache());
+            auto ringBufferHandler = std::make_shared<Pktmon::RingBufferHandler>(
+                packetRingBuffer, options, api.getDataSourceCache());
 
-        auto outputRingBuffer = std::make_shared<RingBuffer<std::string>>(options->ringBufferSize);
+            auto outputRingBuffer = std::make_shared<RingBuffer<std::string>>(options->ringBufferSize*4);
 
-        auto statsHandler = std::make_shared<Pktmon::StatisticsHandler>();
+            auto statsHandler = std::make_shared<Pktmon::StatisticsHandler>();
 
-        auto stream1 = session->createRealtimeStream(ringBufferHandler, 2,options->truncationSize);
-        auto stream2 = session->createRealtimeStream(statsHandler, 2, options->truncationSize);
+            auto stream1 = session->createRealtimeStream(ringBufferHandler, 2, options->truncationSize);
+            auto stream2 = session->createRealtimeStream(statsHandler, 2, options->truncationSize);
 
-        session->start();
+            session->start();
 
-        std::cout << "Capturing for " << options->durationSeconds << " seconds";
-        if (options->truncationSize > 0) {
-            std::cout << " (truncating to " << options->truncationSize << " bytes)";
-        }
-        if (options->droppedOnly) {
-            std::cout << " [DROPPED PACKETS ONLY]";
-        }
-
-        std::cout << "\n";
-
-        // Process packets in real-time as they arrive (time-based loop)
-        auto endTime = std::chrono::steady_clock::now() + std::chrono::seconds(options->durationSeconds);
-
-
-        std::atomic<bool> outputRunning(true);
-        std::thread outputThread(outputThreadFunc, outputRingBuffer, std::ref(outputRunning));
-
-		std::vector<std::thread> consumerThreads;
-
-        for (int i = 0; i < options->numConsumerThreads; i++) {
-            std::thread consumerThread(processPacket, packetRingBuffer, outputRingBuffer, endTime);
-            consumerThreads.push_back(std::move(consumerThread));
-        }
-
-        for (auto& thread : consumerThreads) {
-            if (thread.joinable()) {
-                thread.join();
+            std::cout << "Capturing for " << options->durationSeconds << " seconds";
+            if (options->truncationSize > 0) {
+                std::cout << " (truncating to " << options->truncationSize << " bytes)";
             }
+            if (options->droppedOnly) {
+                std::cout << " [DROPPED PACKETS ONLY]";
+            }
+
+            std::cout << "\n";
+
+            // Process packets in real-time as they arrive (time-based loop)
+            auto endTime = std::chrono::steady_clock::now() + std::chrono::seconds(options->durationSeconds);
+
+
+            std::atomic<bool> outputRunning(true);
+            std::thread outputThread(outputThreadFunc, outputRingBuffer, std::ref(outputRunning));
+
+            // create a thread to stop the session after capture duration ends (in case session->stop() blocks)
+            std::thread stopThread([session, endTime]() {
+                std::this_thread::sleep_until(endTime);
+                session->stop();
+                });
+
+			// Consumer threads to process packets from ring buffer
+            std::vector<std::thread> consumerThreads;
+			const size_t numThreads = options->useMultiThreaded ? options->numConsumerThreads : 1;
+			consumerThreads.reserve(numThreads);
+            for (auto i = 0; i < numThreads; i++) {
+                consumerThreads.emplace_back(processPacket, packetRingBuffer, outputRingBuffer, endTime);
+            }
+            
+			// Wait for stop thread to finish (ensures session is stopped)
+            if (stopThread.joinable()) {
+                stopThread.join();
+			}
+
+			// Wait for capture duration to elapse
+            for (auto& thread : consumerThreads) {
+                if (thread.joinable()) {
+                    thread.join();
+                }
+            }
+
+            // Stop the output thread
+            outputRunning = false;
+            if (outputThread.joinable()) {
+                outputThread.join();
+            }
+
+			std::cout << "\n";
+			std::cout << "**** Capture complete ****\n";
+            std::cout << "\n";
+
+			// print ring buffers statistics
+			std::cout << "=== Packet Ring Buffer ===\n";
+			packetRingBuffer->printStatistics();
+			std::cout << "\n=== Output Ring Buffer ===\n";
+			outputRingBuffer->printStatistics();
+
+			// capture complete - print statistics
+            statsHandler->printStatistics();
+        } catch (const Pktmon::PktmonException& ex) {
+            std::cerr << "Error: " << ex.what() << " (HRESULT: 0x" << std::hex << ex.getHResult() << ")\n";
         }
-
-        session->stop();
-
-        // Drain any remaining packets after capture period ends
-        std::cout << "Draining remaining packets...\n";
-        while (auto entry = packetRingBuffer->tryPop()) {
-            std::ostringstream oss;
-
-            Pktmon::PacketData& packet = *entry;
-
-            packet.printMetadata(oss);
-            packet.printPacketData(oss);
-
-            std::string output = oss.str();
-            outputRingBuffer->tryPush(std::move(output));
-        }
-        
-        // Stop the output thread
-        outputRunning = false;
-        if (outputThread.joinable()) {
-            outputThread.join();
-        }
-    
-        std::cout << "...\n\n";
-
-        statsHandler->printStatistics();
-
-    }
-    catch (const Pktmon::PktmonException& ex) {
-        std::cerr << "Error: " << ex.what() << " (HRESULT: 0x"
-            << std::hex << ex.getHResult() << ")\n";
     }
 }
 

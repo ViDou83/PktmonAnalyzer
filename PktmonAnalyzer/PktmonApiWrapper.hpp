@@ -205,22 +205,102 @@ private:
     std::shared_ptr<DataSourceCache> m_dataSourceCache;
 
     // Function pointers
-    using PfnInitialize = HRESULT(WINAPI*)(UINT32, void*, HANDLE*);
-    using PfnCreateSession = HRESULT(WINAPI*)(HANDLE, LPCWSTR, HANDLE*);
-    using PfnSetSessionActive = HRESULT(WINAPI*)(HANDLE, BOOLEAN);
-    using PfnCreateRealtimeStream = HRESULT(WINAPI*)(HANDLE, void*, void*);
-    using PfnAttachOutput = HRESULT(WINAPI*)(HANDLE, void*);
-    using PfnEnumDataSources = HRESULT(WINAPI*)(HANDLE, PACKETMONITOR_DATA_SOURCE_KIND, 
-                                                 BOOLEAN, SIZE_T, SIZE_T*, 
-                                                 PACKETMONITOR_DATA_SOURCE_LIST*);
-    
-    PfnInitialize m_pfnInitialize{nullptr};
-    PfnCreateSession m_pfnCreateSession{nullptr};
-    PfnSetSessionActive m_pfnSetSessionActive{nullptr};
-    PfnCreateRealtimeStream m_pfnCreateRealtimeStream{nullptr};
-    PfnAttachOutput m_pfnAttachOutput{nullptr};
-    PfnEnumDataSources m_pfnEnumDataSources{nullptr};
-    
+
+    using PacketMonitorAddCaptureConstraint = HRESULT(WINAPI*)(HANDLE, PACKETMONITOR_PROTOCOL_CONSTRAINT *);
+	using PacketMonitorAddSingleDataSourceToSession = HRESULT(WINAPI*)(HANDLE, const PACKETMONITOR_DATA_SOURCE_SPECIFICATION*);
+	using PacketMonitorAttachOutputToSession = HRESULT(WINAPI*)(HANDLE, void*);
+	using PacketMonitorCloseRealtimeStream = void(WINAPI*)(HANDLE);
+	using PacketMonitorCloseSessionHandle = void(WINAPI*)(HANDLE);
+	using PacketMonitorCreateLiveSession = HRESULT(WINAPI*)(HANDLE, LPCWSTR, HANDLE*);
+	using PacketMonitorCreateRealtimeStream = HRESULT(WINAPI*)(HANDLE, void*, void*);
+	using PacketMonitorEnumDataSources = HRESULT(WINAPI*)(HANDLE, PACKETMONITOR_DATA_SOURCE_KIND,
+                                                            BOOLEAN, SIZE_T, SIZE_T*,
+                                                            PACKETMONITOR_DATA_SOURCE_LIST*);
+	using PacketMonitorInitialize = HRESULT(WINAPI*)(UINT32, void*, HANDLE*);
+	using PacketMonitorSetSessionActive = HRESULT(WINAPI*)(HANDLE, BOOLEAN);
+	using PacketMonitorUninitialize = HRESULT(WINAPI*)(HANDLE);
+    //HRESULT
+    //    WINAPI
+    //    PacketMonitorAddCaptureConstraint(
+    //        _In_ PACKETMONITOR_SESSION session,
+    //        _In_ PACKETMONITOR_PROTOCOL_CONSTRAINT const* captureConstraint
+    //    );
+    PacketMonitorAddCaptureConstraint m_pfnAddCaptureConstraint{ nullptr };
+    /*HRESULT
+        WINAPI
+        PacketMonitorAddSingleDataSourceToSession(
+            _In_ PACKETMONITOR_SESSION session,
+            _In_ PACKETMONITOR_DATA_SOURCE_SPECIFICATION const* dataSource
+        );*/
+	PacketMonitorAddSingleDataSourceToSession m_pfnAddSingleDataSourceToSession{ nullptr };
+    /*HRESULT
+        WINAPI
+        PacketMonitorAttachOutputToSession(
+            _In_ PACKETMONITOR_SESSION session,
+            _In_ VOID* outputHandle
+        );*/
+	PacketMonitorAttachOutputToSession m_pfnAttachOutputToSession{ nullptr };
+    /*VOID
+        WINAPI
+        PacketMonitorCloseRealtimeStream(
+            _In_ PACKETMONITOR_REALTIME_STREAM realtimeStream
+        );*/
+	PacketMonitorCloseRealtimeStream m_pfnCloseRealtimeStream{ nullptr };
+    /*VOID
+        WINAPI
+        PacketMonitorCloseSessionHandle(
+            _In_ PACKETMONITOR_SESSION session
+        );*/
+	PacketMonitorCloseSessionHandle m_pfnCloseSessionHandle{ nullptr };
+    //HRESULT
+    //    WINAPI
+    //    PacketMonitorCreateLiveSession(
+    //        _In_ PACKETMONITOR_HANDLE handle,
+    //        _In_ PCWSTR name,
+    //        _Out_ PACKETMONITOR_SESSION* session
+    //    );
+	PacketMonitorCreateLiveSession m_pfnCreateSession{ nullptr };
+    /*HRESULT
+        WINAPI
+        PacketMonitorCreateRealtimeStream(
+            _In_ PACKETMONITOR_HANDLE handle,
+            _In_ PACKETMONITOR_REALTIME_STREAM_CONFIGURATION const* configuration,
+            _Out_ PACKETMONITOR_REALTIME_STREAM* realtimeStream
+        );*/
+	PacketMonitorCreateRealtimeStream m_pfnCreateRealtimeStream{ nullptr };
+    /*HRESULT
+        WINAPI
+        PacketMonitorEnumDataSources(
+            _In_ PACKETMONITOR_HANDLE handle,
+            _In_ PACKETMONITOR_DATA_SOURCE_KIND sourceKind,
+            _In_ BOOLEAN showHidden,
+            _In_ SIZE_T bufferCapacity,
+            _Out_ SIZE_T* bytesNeeded,
+            _Out_writes_bytes_opt_(bufferCapacity) PACKETMONITOR_DATA_SOURCE_LIST* dataSourceList
+        );*/
+	PacketMonitorEnumDataSources m_pfnEnumDataSources{ nullptr };
+    /*HRESULT
+        WINAPI
+        PacketMonitorInitialize(
+            _In_ UINT32 apiVersion,
+            _Reserved_ void* reserved,
+            _Out_ PACKETMONITOR_HANDLE* handle
+        );*/
+    PacketMonitorInitialize m_pfnInitialize{ nullptr };
+    /*HRESULT
+        WINAPI
+        PacketMonitorSetSessionActive(
+            _In_ PACKETMONITOR_SESSION session,
+            _In_ BOOLEAN active
+        );*/
+	PacketMonitorSetSessionActive m_pfnSetSessionActive{ nullptr };
+    /*VOID
+        WINAPI
+        PacketMonitorUninitialize(
+            _In_ PACKETMONITOR_HANDLE handle
+        );*/
+	PacketMonitorUninitialize m_pfnUninitialize{ nullptr };
+
     friend class Session;
     friend class RealtimeStream;
 };

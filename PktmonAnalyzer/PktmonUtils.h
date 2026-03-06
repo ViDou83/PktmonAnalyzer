@@ -1,4 +1,14 @@
 #pragma once
+
+#include <windows.h>       // Add this - needed for FILETIME, SYSTEMTIME, etc.
+#include <basetsd.h>
+#include <string>          // Add this - for std::string, std::wstring
+#include <sstream>         // Add this - for std::ostringstream  
+#include <iomanip>         // Add this - for std::setfill, std::setw
+#include <mutex>           // Add this - for std::mutex
+#include <unordered_map>   // Add this - for std::unordered_map
+#include "Pktmonapi.hpp"   // Add this - for PACKETMONITOR_DATA_SOURCE_KIND, etc.
+
 #include <basetsd.h>
 
 // Helper function to format timestamp
@@ -26,14 +36,14 @@ inline std::string formatTimestamp(const LARGE_INTEGER& timestamp) {
 
 // Capture options structure passed from main application to packet handlers for customized behavior
 struct CaptureOptions {
-    int durationSeconds = 60;
+    int durationSeconds = 10;
     UINT16 truncationSize = 0;
     UINT16 displayLength = 0; // Number of bytes to display in hex dump (0 = no limit)
     bool showDetailedMetadata = false;
     bool droppedOnly = false;
-    bool useMultiThreaded = false;
+    bool useMultiThreaded = true;
     size_t numConsumerThreads = 4; // Default to 4 consumer threads in multi-threaded mode
-    size_t ringBufferSize = 2 << 10; //2K
+    size_t ringBufferSize = 2 << 20; //2K
 };
 
 // Data source cache for efficient lookup

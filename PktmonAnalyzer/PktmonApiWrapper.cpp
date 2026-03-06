@@ -33,21 +33,32 @@ void ApiManager::loadLibrary() {
 }
 
 void ApiManager::resolveFunctions() {
-    m_pfnInitialize = reinterpret_cast<PfnInitialize>(
-        GetProcAddress(m_hModule, "PacketMonitorInitialize"));
-    m_pfnCreateSession = reinterpret_cast<PfnCreateSession>(
-        GetProcAddress(m_hModule, "PacketMonitorCreateLiveSession"));
-    m_pfnSetSessionActive = reinterpret_cast<PfnSetSessionActive>(
-        GetProcAddress(m_hModule, "PacketMonitorSetSessionActive"));
-    m_pfnCreateRealtimeStream = reinterpret_cast<PfnCreateRealtimeStream>(
-        GetProcAddress(m_hModule, "PacketMonitorCreateRealtimeStream"));
-    m_pfnAttachOutput = reinterpret_cast<PfnAttachOutput>(
-        GetProcAddress(m_hModule, "PacketMonitorAttachOutputToSession"));
-    m_pfnEnumDataSources = reinterpret_cast<PfnEnumDataSources>(
-        GetProcAddress(m_hModule, "PacketMonitorEnumDataSources"));
+
+    /*using PacketMonitorAddCaptureConstraint = HRESULT(WINAPI*)(PACKETMONITOR_SESSION, PACKETMONITOR_PROTOCOL_CONSTRAINT const*);
+    using PacketMonitorAddSingleDataSourceToSession = HRESULT(WINAPI*)(PACKETMONITOR_SESSION, PACKETMONITOR_DATA_SOURCE_SPECIFICATION const*);
+    using PacketMonitorAttachOutputToSession = HRESULT(WINAPI*)(PACKETMONITOR_SESSION, void*);
+    using PacketMonitorCloseRealtimeStream = void(WINAPI*)(PACKETMONITOR_REALTIME_STREAM);
+    using PacketMonitorCloseSessionHandle = void(WINAPI*)(PACKETMONITOR_SESSION);
+    using PacketMonitorCreateLiveSession = HRESULT(WINAPI*)(HANDLE, LPCWSTR, PACKETMONITOR_SESSION*);
+    using PacketMonitorCreateRealtimeStream = HRESULT(WINAPI*)(HANDLE, PACKETMONITOR_REALTIME_STREAM_CONFIGURATION const*, PACKETMONITOR_REALTIME_STREAM*);
+    using PacketMonitorEnumDataSources = HRESULT(WINAPI*)(HANDLE, PACKETMONITOR_DATA_SOURCE_KIND, BOOLEAN, SIZE_T, SIZE_T*, PACKETMONITOR_DATA_SOURCE_LIST*);
+    using PacketMonitorInitialize = HRESULT(WINAPI*)(UINT32, void*, HANDLE*);
+    using PacketMonitorSetSessionActive = HRESULT(WINAPI*)(PACKETMONITOR_SESSION, BOOLEAN);
+    using PacketMonitorUninitialize = HRESULT(WINAPI*)(HANDLE);*/
+    m_pfnAddCaptureConstraint = reinterpret_cast<PacketMonitorAddCaptureConstraint>(GetProcAddress(m_hModule, "PacketMonitorAddCaptureConstraint"));
+	m_pfnAddSingleDataSourceToSession = reinterpret_cast<PacketMonitorAddSingleDataSourceToSession>(GetProcAddress(m_hModule, "PacketMonitorAddSingleDataSourceToSession"));
+	m_pfnAttachOutputToSession = reinterpret_cast<PacketMonitorAttachOutputToSession>(GetProcAddress(m_hModule, "PacketMonitorAttachOutputToSession"));
+	m_pfnCloseRealtimeStream = reinterpret_cast<PacketMonitorCloseRealtimeStream>(GetProcAddress(m_hModule, "PacketMonitorCloseRealtimeStream"));
+	m_pfnCloseSessionHandle = reinterpret_cast<PacketMonitorCloseSessionHandle>(GetProcAddress(m_hModule, "PacketMonitorCloseSessionHandle"));
+	m_pfnCreateSession = reinterpret_cast<PacketMonitorCreateLiveSession>(GetProcAddress(m_hModule, "PacketMonitorCreateLiveSession"));
+	m_pfnCreateRealtimeStream = reinterpret_cast<PacketMonitorCreateRealtimeStream>(GetProcAddress(m_hModule, "PacketMonitorCreateRealtimeStream"));
+	m_pfnEnumDataSources = reinterpret_cast<PacketMonitorEnumDataSources>(GetProcAddress(m_hModule, "PacketMonitorEnumDataSources"));
+	m_pfnInitialize = reinterpret_cast<PacketMonitorInitialize>(GetProcAddress(m_hModule, "PacketMonitorInitialize"));
+	m_pfnSetSessionActive = reinterpret_cast<PacketMonitorSetSessionActive>(GetProcAddress(m_hModule, "PacketMonitorSetSessionActive"));
+	m_pfnUninitialize = reinterpret_cast<PacketMonitorUninitialize>(GetProcAddress(m_hModule, "PacketMonitorUninitialize"));
     
-    if (!m_pfnInitialize || !m_pfnCreateSession || !m_pfnSetSessionActive ||
-        !m_pfnCreateRealtimeStream || !m_pfnAttachOutput || !m_pfnEnumDataSources) {
+	if (!m_pfnAddCaptureConstraint || !m_pfnAddSingleDataSourceToSession || !m_pfnAttachOutputToSession ||
+        !m_pfnCloseRealtimeStream || !m_pfnCloseSessionHandle || !m_pfnCreateSession || !m_pfnCreateRealtimeStream || !m_pfnEnumDataSources || !m_pfnInitialize || !m_pfnSetSessionActive || !m_pfnUninitialize) {
         throw PktmonException("Failed to resolve one or more API functions");
     }
 }
@@ -78,8 +89,7 @@ void ApiManager::shutdown() {
     std::lock_guard<std::mutex> lock(m_mutex);
     
     if (m_handle) {
-        CloseHandle(m_handle);
-        m_handle = nullptr;
+        m_pfnUninitialize(m_handle);
     }
     
     m_dataSourceCache->clear();
@@ -257,7 +267,7 @@ void RealtimeStream::create() {
 }
 
 void RealtimeStream::attachToSession() {
-    HRESULT hr = m_session->getManager().m_pfnAttachOutput(
+    HRESULT hr = m_session->getManager().m_pfnAttachOutputToSession(
         m_session->getHandle(),
         m_streamHandle);
     
