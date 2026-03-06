@@ -2316,4 +2316,3 @@ inline std::ostream& operator<<(std::ostream& os, PKTMON_DROP_REASON reason)
 {
     return os << pktmonDropReasonToString(reason);
 }
-

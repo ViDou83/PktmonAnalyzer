@@ -11,6 +11,8 @@
 #include <iostream>
 #include <iomanip>
 #include <algorithm>
+#include <format>
+#include <sstream>
 
 namespace Pktmon {
 
@@ -61,65 +63,41 @@ public:
 	}
     
     void printMetadata(std::ostringstream& oss){
-        auto metadata = getMetadata();
-        oss << "======================================================\n";
+        const auto metadata = getMetadata();
+        constexpr std::string_view separator = "======================================================\n";
+
+        oss << separator;
+
+        // Common: Timestamp always shown
+        oss << std::format("{:<18}{}\n", "Timestamp:", formatTimestamp(metadata.TimeStamp));
+
         if (m_captureOptions->showDetailedMetadata) {
-            oss << "Timestamp:        " << formatTimestamp(metadata.TimeStamp) << "\n";
-            oss << "Packet Group ID:  " << std::dec << metadata.PktGroupId << "\n";
-            oss << "Packet Count:     " << std::dec << metadata.PktCount << "\n";
-            oss << "Appearance Count: " << std::dec << metadata.AppearanceCount << "\n";
-            oss << "Direction:        " << std::dec << metadata.DirectionName << "\n";
-            oss << "Packet Type:      " << std::dec << metadata.PacketType << "\n";
-            if (m_dataSourceCache->size()) {
-                std::wstring componentName = m_dataSourceCache->getComponentName(metadata.ComponentId);
-                std::string componentStr;
-
-                if (!componentName.empty()) {
-                    int size = WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, nullptr, 0, nullptr, nullptr);
-                    if (size > 0) {
-                        componentStr.resize(size - 1);
-                        WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, &componentStr[0], size, nullptr, nullptr);
-                    }
-                }
-                oss << "Component:        " << std::left <<
-                    (componentStr + " (ID:" + std::to_string(metadata.ComponentId) + ")") << "\n";
-            }
-            else {
-                oss << "Component:        " << std::setw(31) << metadata.ComponentId << "\n";
-            }
-            oss << "Edge ID:          " << std::dec << metadata.EdgeId << "\n";
-            oss << "Filter ID:        " << std::dec << metadata.FilterId << "\n";
-            oss << "Processor:        " << std::dec << metadata.Processor << "\n";
-        }
-        else {
-            oss << "Timestamp: " << std::left << std::setw(30) << formatTimestamp(metadata.TimeStamp) << "\n";
-            oss << "Packet:    " << std::setw(8) << std::dec << metadata.PktGroupId << "\n";
-            if (m_dataSourceCache->size()) {
-                std::wstring componentName = m_dataSourceCache->getComponentName(metadata.ComponentId);
-                std::string componentStr;
-
-                if (!componentName.empty()) {
-                    int size = WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, nullptr, 0, nullptr, nullptr);
-                    if (size > 0) {
-                        componentStr.resize(size - 1);
-                        WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, &componentStr[0], size, nullptr, nullptr);
-                    }
-                }
-                oss << "Component: " << std::left <<
-                    (componentStr + " (ID:" + std::to_string(metadata.ComponentId) + ")") << "\n";
-            }
-            else {
-                oss << "Component: " << std::setw(31) << metadata.ComponentId << "\n";
-            }
-            oss << "Processor: " << std::dec << metadata.Processor << "\n";
+            oss << std::format("{:<18}{}\n", "Packet Group ID:", metadata.PktGroupId);
+            oss << std::format("{:<18}{}\n", "Packet Count:", metadata.PktCount);
+            oss << std::format("{:<18}{}\n", "Appearance Count:", metadata.AppearanceCount);
+            oss << std::format("{:<18}{}\n", "Direction:", metadata.DirectionName);
+            oss << std::format("{:<18}{}\n", "Packet Type:", metadata.PacketType);
+        } else {
+            oss << std::format("{:<18}{}\n", "Packet:", metadata.PktGroupId);
         }
 
+        oss << std::format("{:<18}{}\n", "Processor:", metadata.Processor);
+        if (m_dataSourceCache->size()) {
+            std::string componentName = m_dataSourceCache->getComponentName(metadata.ComponentId);
+            oss << std::format("{:<18}{} (ID:{})\n", "Component:", componentName, metadata.ComponentId);
+        } else {
+            oss << std::format("{:<18}{}\n", "Component:", metadata.ComponentId);
+        }
+
+        // Drop info (if applicable)
         if (metadata.DropReason != 0) {
-            oss << "!!!! Drop Reason   : " << static_cast<PKTMON_DROP_REASON>(metadata.DropReason) << "\n";
-            oss << "!!!! Drop Location : " << static_cast<PKTMON_DROP_LOCATION>(metadata.DropLocation) << "\n";
+            const auto dropReasonStr = pktmonDropReasonToString(static_cast<PKTMON_DROP_REASON>(metadata.DropReason));
+            const auto dropLocationStr = pktmonDropLocationToString(static_cast<PKTMON_DROP_LOCATION>(metadata.DropLocation));
+            oss << std::format("{:<18}{} (0x{:X})\n", "Drop Reason:", dropReasonStr, metadata.DropReason);
+            oss << std::format("{:<18}{} (0x{:X})\n", "Drop Location:", dropLocationStr, metadata.DropLocation);
         }
 
-        oss << "======================================================" << std::endl;
+        oss << separator;
     }
 
     void printPacketData(std::ostringstream& oss) {

@@ -6,6 +6,7 @@
 #include <type_traits>
 #include <vector>
 #include <utility>
+#include <iostream>
 
 struct Statistics {
     std::atomic<uint64_t> totalPushed{ 0 };

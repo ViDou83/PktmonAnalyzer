@@ -10,6 +10,7 @@
 #include <atomic>
 #include <mutex>
 #include <map>
+#include <concurrent_unordered_map.h>  // PPL
 
 namespace Pktmon {
 
@@ -85,6 +86,15 @@ namespace Pktmon {
 
 		StatisticsHandler() = default;
 
+        static std::atomic<uint64_t>& get_or_create_counter(
+            concurrency::concurrent_unordered_map<uint32_t, std::shared_ptr<std::atomic<uint64_t>>>& m,
+            uint32_t key)
+        {
+            // insert a ptr if missing; safe because shared_ptr is copy/move
+            auto [it, inserted] = m.insert({ key, std::make_shared<std::atomic<uint64_t>>(0) });
+            return *(it->second);
+        }
+
         void onPacketReceived(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) override {
 
 			// print data memory address and length for 
@@ -97,19 +107,21 @@ namespace Pktmon {
 
             auto packetData = std::make_shared<Pktmon::PacketData>(data, m_captureOptions, api.getDataSourceCache());
 			auto metadata = packetData->getMetadata();
-            if (packetData) {
-                m_componentStats[metadata.ComponentId]++;
+			get_or_create_counter(m_componentStats, metadata.ComponentId).fetch_add(1, std::memory_order_relaxed);
 
-                if (metadata.DropReason != 0) {
-                    ++m_droppedPackets;
-                    m_dropReasons[metadata.DropReason]++;
-                }
-
-                m_processorStats[metadata.Processor]++;
+            if (metadata.DropReason != 0) {
+                ++m_droppedPackets;
+				get_or_create_counter(m_dropReasons, metadata.DropReason).fetch_add(1, std::memory_order_relaxed);
             }
+
+			get_or_create_counter(m_processorStats, metadata.Processor).fetch_add(1, std::memory_order_relaxed);
         }
 
         void printStatistics() const {
+			constexpr auto separator = "==========================\n";
+
+            std::cout << separator;
+
             std::cout << "\n=== Capture Statistics ===\n";
             std::cout << "Total Packets: " << m_packetCount << "\n";
             std::cout << "Total Bytes: " << m_totalBytes << "\n";
@@ -120,26 +132,25 @@ namespace Pktmon {
             if (!m_componentStats.empty()) {
                 std::cout << "\n--- Per-Component Statistics ---\n";
                 for (const auto& [componentId, count] : m_componentStats) {
-                    std::cout << "  Component " << componentId << ": " << count << " packets\n";
+                    std::cout << "  Component " << componentId << ": " << count->load() << " packets\n";
                 }
             }
 
             if (!m_processorStats.empty()) {
                 std::cout << "\n--- Per-Processor Statistics ---\n";
                 for (const auto& [processor, count] : m_processorStats) {
-                    std::cout << "  Processor " << processor << ": " << count << " packets\n";
+                    std::cout << "  Processor " << processor << ": " << count->load() << " packets\n";
                 }
             }
 
             if (!m_dropReasons.empty()) {
                 std::cout << "\n--- Drop Reasons ---\n";
                 for (const auto& [reason, count] : m_dropReasons) {
-                    std::cout << "  Reason 0x" << std::hex << reason << std::dec
-                        << ": " << count << " packets\n";
+                    std::cout << "  Reason 0x" << std::hex << reason << " " << "count:" << std::dec << count->load() << "\n";
                 }
             }
 
-            std::cout << "==========================\n";
+            std::cout << separator;
         }
 
     private:
@@ -149,9 +160,12 @@ namespace Pktmon {
         std::atomic<uint64_t> m_missedWrites{0};
         std::atomic<uint64_t> m_missedReads{0};
 
-        std::map<UINT16, uint64_t> m_componentStats;
-        std::map<UINT16, uint64_t> m_processorStats;
-        std::map<UINT32, uint64_t> m_dropReasons;
+        //std::map<UINT16, uint64_t> m_componentStats;
+        //std::map<UINT16, uint64_t> m_processorStats;
+        //std::map<UINT32, uint64_t> m_dropReasons;
+		concurrency::concurrent_unordered_map<uint32_t, std::shared_ptr<std::atomic<uint64_t>>> m_componentStats;
+		concurrency::concurrent_unordered_map<uint32_t, std::shared_ptr<std::atomic<uint64_t>>> m_processorStats;
+		concurrency::concurrent_unordered_map<uint32_t, std::shared_ptr<std::atomic<uint64_t>>> m_dropReasons;
     };
 
 } // namespace Pktmon

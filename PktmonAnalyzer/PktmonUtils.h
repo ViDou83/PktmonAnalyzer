@@ -34,6 +34,19 @@ inline std::string formatTimestamp(const LARGE_INTEGER& timestamp) {
     return "Invalid timestamp";
 }
 
+inline std::string wstringToString(const std::wstring& wstr) {
+	std::string componentStr = "UNKNOWN";
+    auto componentName = wstr;
+    if (!componentName.empty()) {
+        int size = WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        if (size > 0) {
+            componentStr.resize(size - 1);
+            WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, &componentStr[0], size, nullptr, nullptr);
+        }
+    }
+	return componentStr;
+}
+
 // Capture options structure passed from main application to packet handlers for customized behavior
 struct CaptureOptions {
     int durationSeconds = 10;
@@ -83,20 +96,20 @@ public:
         return false;
     }
 
-    std::wstring getComponentName(UINT32 componentId) const {
+    std::string getComponentName(UINT32 componentId) const {
         DataSourceInfo info;
         if (lookup(componentId, info)) {
-            return info.name;
+			return wstringToString(info.name);
         }
-        return L"Unknown Component";
+        return "Unknown Component";
     }
 
-    std::wstring getComponentDescription(UINT32 componentId) const {
+    std::string getComponentDescription(UINT32 componentId) const {
         DataSourceInfo info;
         if (lookup(componentId, info)) {
-            return info.description;
+            return wstringToString(info.description);
         }
-        return L"";
+        return "Unknown Description";
     }
 
     void clear() {
