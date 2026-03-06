@@ -7,10 +7,10 @@
 #include <vector>
 #include <utility>
 
-template <class T>
-class SpmcRing {
+template <typename T>
+class RingBuffer {
 public:
-    explicit SpmcRing(std::size_t capacity_pow2)
+    explicit RingBuffer(std::size_t capacity_pow2)
         : cap_(capacity_pow2),
         mask_(capacity_pow2 - 1),
         buf_(capacity_pow2)
@@ -32,13 +32,15 @@ public:
 
         buf_[h & mask_] = std::move(v); // write payload first
         head_.store(h + 1, std::memory_order_release); // publish moving forward
+        
+		//std::cout << "Producer " << std::this_thread::get_id() << ": Pushed packet to slot " << (h & mask_) << ", new head index: " << (h + 1) << "\n";
+        
         return true;
     }
 
     // Multi-consumer
     std::optional<T> tryPop() {
         std::size_t t = tail_.load(std::memory_order_relaxed);
-
         for (;;) {
             const std::size_t h = head_.load(std::memory_order_acquire);
             if (t == h) {
@@ -55,7 +57,6 @@ public:
                 T out = std::move(buf_[t & mask_]);
                 return out;
             }
-
             // CAS failed: 't' updated to latest tail, loop and retry
         }
     }

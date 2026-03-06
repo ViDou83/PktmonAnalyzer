@@ -19,7 +19,7 @@ class PacketData {
 public:
     PacketData() = default;
 
-    PacketData(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data,
+    explicit PacketData(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data,
         std::shared_ptr<CaptureOptions> options,
         std::shared_ptr<DataSourceCache> dataSourceCache)
         : m_captureOptions(options),
@@ -51,16 +51,16 @@ public:
         return getMetadata().DropReason != 0;
 	}
     
-    void printMetadata(){
+    void printMetadata(std::ostringstream& oss){
 		auto metadata = getMetadata();
-        std::cout << "======================================================\n";
+        oss << "======================================================\n";
         if (m_captureOptions->showDetailedMetadata) {
-            std::cout << "Timestamp:        " << formatTimestamp(metadata.TimeStamp) << "\n";
-            std::cout << "Packet Group ID:  " << std::dec << metadata.PktGroupId << "\n";
-            std::cout << "Packet Count:     " << std::dec << metadata.PktCount << "\n";
-            std::cout << "Appearance Count: " << std::dec << metadata.AppearanceCount << "\n";
-            std::cout << "Direction:        " << std::dec << metadata.DirectionName << "\n";
-            std::cout << "Packet Type:      " << std::dec << metadata.PacketType << "\n";
+            oss << "Timestamp:        " << formatTimestamp(metadata.TimeStamp) << "\n";
+            oss << "Packet Group ID:  " << std::dec << metadata.PktGroupId << "\n";
+            oss << "Packet Count:     " << std::dec << metadata.PktCount << "\n";
+            oss << "Appearance Count: " << std::dec << metadata.AppearanceCount << "\n";
+            oss << "Direction:        " << std::dec << metadata.DirectionName << "\n";
+            oss << "Packet Type:      " << std::dec << metadata.PacketType << "\n";
             if (m_dataSourceCache->size()) {
                 std::wstring componentName = m_dataSourceCache->getComponentName(metadata.ComponentId);
                 std::string componentStr;
@@ -71,62 +71,61 @@ public:
                         WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, &componentStr[0], size, nullptr, nullptr);
                     }
                 }
-                std::cout << "Component:        " << std::left <<
+                oss << "Component:        " << std::left <<
                     (componentStr + " (ID:" + std::to_string(metadata.ComponentId) + ")") << "\n";
 
             }
             else {
-                std::cout << "Component: " << std::setw(31) << metadata.ComponentId << "\n";
+                oss << "Component: " << std::setw(31) << metadata.ComponentId << "\n";
             }
-            std::cout << "Edge ID:          " << std::dec << metadata.EdgeId << "\n";
-            std::cout << "Filter ID:        " << std::dec << metadata.FilterId << "\n";
-            std::cout << "Processor:        " << std::dec << metadata.Processor << "\n";
-
+            oss << "Edge ID:          " << std::dec << metadata.EdgeId << "\n";
+            oss << "Filter ID:        " << std::dec << metadata.FilterId << "\n";
+            oss << "Processor:        " << std::dec << metadata.Processor << "\n";
             if (metadata.DropReason != 0) {
-                std::cout << "!!!! Drop Reason   : " << static_cast<PKTMON_DROP_REASON>(metadata.DropReason) << "\n";
-                std::cout << "!!!! Drop Location : " << static_cast<PKTMON_DROP_LOCATION>(metadata.DropLocation) << "\n";
+                oss << "!!!! Drop Reason   : " << static_cast<PKTMON_DROP_REASON>(metadata.DropReason) << "\n";
+                oss << "!!!! Drop Location : " << static_cast<PKTMON_DROP_LOCATION>(metadata.DropLocation) << "\n";
             }
         }
         else {
-            std::cout << "Timestamp: " << std::left << std::setw(30) << formatTimestamp(metadata.TimeStamp) << "\n";
-            std::cout << "Packet:    " << std::setw(8) << std::dec << metadata.PktGroupId << "\n";
+            oss << "Timestamp: " << std::left << std::setw(30) << formatTimestamp(metadata.TimeStamp) << "\n";
+            oss << "Packet:    " << std::setw(8) << std::dec << metadata.PktGroupId << "\n";
             if (m_dataSourceCache->size()) {
                 std::wstring componentName = m_dataSourceCache->getComponentName(metadata.ComponentId);
                 std::string componentStr(componentName.begin(), componentName.end());
-                std::cout << "Component: " << std::left <<
+                oss << "Component: " << std::left <<
                     (componentStr + " (ID:" + std::to_string(metadata.ComponentId) + ")") << "\n";
 
             }
             else {
-                std::cout << "Component: " << std::setw(31) << metadata.ComponentId << "\n";
+                oss << "Component: " << std::setw(31) << metadata.ComponentId << "\n";
             }
-            std::cout << "Processor: " << std::dec << metadata.Processor << "\n";
+            oss << "Processor: " << std::dec << metadata.Processor << "\n";
         }
 
         if (metadata.DropReason != 0) {
-            std::cout << "!!!! Drop Reason   : " << static_cast<PKTMON_DROP_REASON>(metadata.DropReason) << "\n";
-            std::cout << "!!!! Drop Location : " << static_cast<PKTMON_DROP_LOCATION>(metadata.DropLocation) << "\n";
+            oss << "!!!! Drop Reason   : " << static_cast<PKTMON_DROP_REASON>(metadata.DropReason) << "\n";
+            oss << "!!!! Drop Location : " << static_cast<PKTMON_DROP_LOCATION>(metadata.DropLocation) << "\n";
         }
 
-        std::cout << "======================================================" << std::endl;
+        oss << "======================================================" << std::endl;
 
     }
 
-    void printPacketData() {
-        std::cout << "Packet: " << m_packetLength << " bytes\n";
+    void printPacketData(std::ostringstream& oss) {
+        oss << "Packet: " << m_packetLength << " bytes\n";
 
 		auto displayLength = m_captureOptions->displayLength == 0 ? m_packetLength : std::min<size_t>(static_cast<size_t>(m_captureOptions->displayLength), m_packetLength);
 
         for (size_t i = 0; i < displayLength; ++i) {
             if (i % 16 == 0) {
-                std::cout << std::hex << std::uppercase << std::right << std::setfill('0') << std::setw(4) << i << ": ";
+                oss << std::hex << std::uppercase << std::right << std::setfill('0') << std::setw(4) << i << ": ";
             }
-            std::cout << std::hex << std::uppercase << std::right << std::setfill('0') << std::setw(2) << static_cast<int>(m_packet[i]) << " ";
+            oss << std::hex << std::uppercase << std::right << std::setfill('0') << std::setw(2) << static_cast<int>(m_packet[i]) << " ";
             if ((i + 1) % 16 == 0) {
-                std::cout << std::endl;
+                oss << std::endl;
             }
         }
-        std::cout << std::endl;
+        oss << std::endl;
     }
 
 

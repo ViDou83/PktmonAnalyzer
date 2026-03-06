@@ -33,7 +33,7 @@ struct CaptureOptions {
     bool droppedOnly = false;
     bool useMultiThreaded = false;
     size_t numConsumerThreads = 4; // Default to 4 consumer threads in multi-threaded mode
-    size_t ringBufferSize = 10000; // Number of packets to buffer
+    size_t ringBufferSize = 2 << 10; //2K
 };
 
 // Data source cache for efficient lookup

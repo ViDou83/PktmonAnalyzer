@@ -1,11 +1,35 @@
-﻿#include <windows.h>
+﻿// Windows
+#include <windows.h>
+
+// STL
 #include <iostream>
 #include <thread>
 #include <chrono>
 #include <string>
+
+//local
+#include "Pktmonapi.hpp"
 #include "PktmonApiWrapper.hpp"
 #include "PacketHandlers.hpp"
 #include "PktmonUtils.h"
+#include "RingBuffer.hpp"
+#include "PacketData.hpp"
+
+// Dedicated output thread - uses lock-free RingBuffer for messages
+void outputThreadFunc(const std::shared_ptr<RingBuffer<std::string>>& outputQueue,
+                      std::atomic<bool>& running) {
+    while (running.load(std::memory_order_acquire) || true) {
+        if (auto msg = outputQueue->tryPop()) {
+            std::cout << *msg;
+        }
+        else {
+            if (!running.load(std::memory_order_acquire)) {
+                break;  // Exit only when stopped AND queue is empty
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
+        }
+    }
+}
 
 void printDataSources() {
     try {
@@ -25,155 +49,132 @@ void printDataSources() {
     }
 }
 
-//void capturePacketsMultiThreaded(const Pktmon::CaptureOptions& options) {
-//    try {
-//        auto& api = Pktmon::ApiManager::getInstance();
-//        api.initialize(PACKETMONITOR_API_VERSION_1_0);
-//
-//        auto session = api.createSession(L"MultiThreaded Capture Session");
-//
-//        // Create ring buffer
-//        auto ringBuffer = std::make_shared<Pktmon::RingBuffer<Pktmon::PacketData>>(
-//            options.ringBufferSize);
-//
-//        // Create ring buffer handler (producer)
-//        auto ringBufferHandler = std::make_shared<Pktmon::RingBufferHandler>(
-//            ringBuffer, options, api.getDataSourceCache());
-//
-//        // Create statistics handler
-//        auto statsHandler = std::make_shared<Pktmon::StatisticsHandler>();
-//
-//        // Create streams
-//        auto stream1 = session->createRealtimeStream(ringBufferHandler, 1, options.truncationSize);
-//        auto stream2 = session->createRealtimeStream(statsHandler, 1, options.truncationSize);
-//
-//        // Create multi-threaded processor
-//        Pktmon::MultiThreadedPacketProcessor processor(
-//            ringBuffer,
-//            options.numConsumerThreads,
-//            options,
-//            api.getDataSourceCache());
-//
-//        // Start consumer threads
-//        processor.start();
-//
-//        // Start capture
-//        session->start();
-//
-//        std::cout << "Capturing for " << options.durationSeconds << " seconds";
-//        if (options.truncationSize > 0) {
-//            std::cout << " (truncating to " << options.truncationSize << " bytes)";
-//        }
-//        if (options.droppedOnly) {
-//            std::cout << " [DROPPED PACKETS ONLY]";
-//        }
-//        std::cout << "\n";
-//        std::cout << "Ring buffer size: " << options.ringBufferSize << " packets\n";
-//        std::cout << "Consumer threads: " << options.numConsumerThreads << "\n\n";
-//
-//        // Wait for capture duration
-//        std::this_thread::sleep_for(std::chrono::seconds(options.durationSeconds));
-//
-//        // Stop capture
-//        std::cout << "\nStopping capture...\n";
-//        session->stop();
-//
-//        // Give consumers time to drain the buffer
-//        std::cout << "Draining ring buffer...\n";
-//        while (!ringBuffer->empty()) {
-//            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-//        }
-//
-//        // Stop processor threads
-//        processor.stop();
-//
-//        // Print statistics
-//        std::cout << "\n=== Ring Buffer Statistics ===\n";
-//        auto rbStats = ringBuffer->getStatistics();
-//        std::cout << "Total Pushed: " << rbStats.totalPushed << "\n";
-//        std::cout << "Total Popped: " << rbStats.totalPopped << "\n";
-//        std::cout << "Dropped (buffer full): " << rbStats.droppedItems << "\n";
-//        std::cout << "Handler dropped: " << ringBufferHandler->getDroppedPackets() << "\n";
-//
-//        std::cout << "\n=== Thread Statistics ===\n";
-//        auto threadStats = processor.getStatistics();
-//        for (const auto& stat : threadStats) {
-//            std::cout << "Thread " << stat.threadId << ": "
-//                << stat.packetsProcessed << " packets\n";
-//        }
-//        std::cout << "Total processed: " << processor.getTotalProcessed() << "\n";
-//
-//        statsHandler->printStatistics();
-//
-//    }
-//    catch (const Pktmon::PktmonException& ex) {
-//        std::cerr << "Error: " << ex.what() << " (HRESULT: 0x"
-//            << std::hex << ex.getHResult() << ")\n";
-//    }
-//}
+void processPacket(const std::shared_ptr<RingBuffer<Pktmon::PacketData>>& packetRingBuffer,
+                   const std::shared_ptr<RingBuffer<std::string>>& outputRingBuffer,
+                   const std::chrono::steady_clock::time_point& endTime) {
+    while (std::chrono::steady_clock::now() < endTime) {
+        if (auto entry = packetRingBuffer->tryPop()) {
+            // Got a packet - process it
+            std::ostringstream oss;
+            Pktmon::PacketData& packet = *entry;
 
-void capturePackets(const std::shared_ptr<CaptureOptions>& options) {
-    if (options->useMultiThreaded) {
-        //capturePacketsMultiThreaded(options);
-    }
-    else {
-        // Original single-threaded implementation
-        try {
-            auto& api = Pktmon::ApiManager::getInstance();
-            api.initialize(PACKETMONITOR_API_VERSION_1_0);
+            packet.printMetadata(oss);
+            packet.printPacketData(oss);
 
-            auto session = api.createSession(L"MyCapture Session");
-
-            auto packetHandler = 
-                std::make_shared<Pktmon::HexDumpHandler>(options, api.getDataSourceCache());
-            auto statsHandler = std::make_shared<Pktmon::StatisticsHandler>();
-
-            auto stream1 = session->createRealtimeStream(packetHandler, 2,options->truncationSize);
-            auto stream2 = session->createRealtimeStream(statsHandler, 2, options->truncationSize);
-
-            session->start();
-
-            std::cout << "Capturing for " << options->durationSeconds << " seconds";
-            if (options->truncationSize > 0) {
-                std::cout << " (truncating to " << options->truncationSize << " bytes)";
-            }
-            if (options->droppedOnly) {
-                std::cout << " [DROPPED PACKETS ONLY]";
-            }
-            std::cout << "...\n\n";
-
-            std::this_thread::sleep_for(std::chrono::seconds(options->durationSeconds));
-
-            session->stop();
-            statsHandler->printStatistics();
-
+            std::string output = oss.str();
+            outputRingBuffer->tryPush(std::move(output));
         }
-        catch (const Pktmon::PktmonException& ex) {
-            std::cerr << "Error: " << ex.what() << " (HRESULT: 0x"
-                << std::hex << ex.getHResult() << ")\n";
+        else {
+            // Buffer empty - wait a bit before checking again (avoid busy-spin)
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
     }
 }
 
+static void run(const std::shared_ptr<CaptureOptions>& options) {
+    // Original single-threaded implementation
+    try {
+        auto& api = Pktmon::ApiManager::getInstance();
+        api.initialize(PACKETMONITOR_API_VERSION_1_0);
+
+        auto session = api.createSession(L"MyCapture Session");
+
+		auto packetRingBuffer = std::make_shared<RingBuffer<Pktmon::PacketData>>(options->ringBufferSize);
+
+        auto ringBufferHandler = std::make_shared<Pktmon::RingBufferHandler>(
+            packetRingBuffer, options, api.getDataSourceCache());
+
+        auto outputRingBuffer = std::make_shared<RingBuffer<std::string>>(options->ringBufferSize);
+
+        auto statsHandler = std::make_shared<Pktmon::StatisticsHandler>();
+
+        auto stream1 = session->createRealtimeStream(ringBufferHandler, 2,options->truncationSize);
+        auto stream2 = session->createRealtimeStream(statsHandler, 2, options->truncationSize);
+
+        session->start();
+
+        std::cout << "Capturing for " << options->durationSeconds << " seconds";
+        if (options->truncationSize > 0) {
+            std::cout << " (truncating to " << options->truncationSize << " bytes)";
+        }
+        if (options->droppedOnly) {
+            std::cout << " [DROPPED PACKETS ONLY]";
+        }
+
+        std::cout << "\n";
+
+        // Process packets in real-time as they arrive (time-based loop)
+        auto endTime = std::chrono::steady_clock::now() + std::chrono::seconds(options->durationSeconds);
+
+
+        std::atomic<bool> outputRunning(true);
+        std::thread outputThread(outputThreadFunc, outputRingBuffer, std::ref(outputRunning));
+
+		std::vector<std::thread> consumerThreads;
+
+        for (int i = 0; i < options->numConsumerThreads; i++) {
+            std::thread consumerThread(processPacket, packetRingBuffer, outputRingBuffer, endTime);
+            consumerThreads.push_back(std::move(consumerThread));
+        }
+
+        for (auto& thread : consumerThreads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+
+        session->stop();
+
+        // Drain any remaining packets after capture period ends
+        std::cout << "Draining remaining packets...\n";
+        while (auto entry = packetRingBuffer->tryPop()) {
+            std::ostringstream oss;
+
+            Pktmon::PacketData& packet = *entry;
+
+            packet.printMetadata(oss);
+            packet.printPacketData(oss);
+
+            std::string output = oss.str();
+            outputRingBuffer->tryPush(std::move(output));
+        }
+        
+        // Stop the output thread
+        outputRunning = false;
+        if (outputThread.joinable()) {
+            outputThread.join();
+        }
+    
+        std::cout << "...\n\n";
+
+        statsHandler->printStatistics();
+
+    }
+    catch (const Pktmon::PktmonException& ex) {
+        std::cerr << "Error: " << ex.what() << " (HRESULT: 0x"
+            << std::hex << ex.getHResult() << ")\n";
+    }
+}
+
 void printUsage() {
-    std::wcout << L"Usage:\n"
-        << L"  -enum                    : Enumerate data sources\n"
-        << L"  -capture <seconds>       : Capture packets for specified duration\n"
-        << L"  -truncate <bytes>        : Truncate captured packets to specified size\n"
-		<< L"                              (0 = no truncation, max 65535)\n"
-        << L"  -display <bytes>         : Number of bytes to display in hex dump (0 = no limit, max 65535)\n"
-        << L"  -detailed                : Show detailed packet information\n"
-        << L"  -nometadata              : Hide metadata in output\n"
-        << L"  -drop                    : Show only dropped packets\n"
-        << L"  -threads <count>         : Number of consumer threads (enables multi-threaded mode)\n"
-        << L"  -bufsize <count>         : Ring buffer size (default: 10000)\n"
-        << L"\n"
-        << L"Examples:\n"
-        << L"  PktmonAnalyzer.exe -enum\n"
-        << L"  PktmonAnalyzer.exe -capture 30\n"
-        << L"  PktmonAnalyzer.exe -capture 60 -threads 4\n"
-        << L"  PktmonAnalyzer.exe -capture 60 -threads 4 -bufsize 50000\n"
-        << L"  PktmonAnalyzer.exe -capture 60 -drop -detailed -threads 2\n";
+    std::cout << "Usage:\n"
+        << "  -enum                    : Enumerate data sources\n"
+        << "  -capture <seconds>       : Capture packets for specified duration\n"
+        << "  -truncate <bytes>        : Truncate captured packets to specified size\n"
+		<< "                              (0 = no truncation, max 65535)\n"
+        << "  -display <bytes>         : Number of bytes to display in hex dump (0 = no limit, max 65535)\n"
+        << "  -detailed                : Show detailed packet information\n"
+        << "  -nometadata              : Hide metadata in output\n"
+        << "  -drop                    : Show only dropped packets\n"
+        << "  -threads <count>         : Number of consumer threads (enables multi-threaded mode)\n"
+        << "  -bufsize <count>         : Ring buffer size (default: 10000)\n"
+        << "\n"
+        << "Examples:\n"
+        << "  PktmonAnalyzer.exe -enum\n"
+        << "  PktmonAnalyzer.exe -capture 30\n"
+        << "  PktmonAnalyzer.exe -capture 60 -threads 4\n"
+        << "  PktmonAnalyzer.exe -capture 60 -threads 4 -bufsize 50000\n"
+        << "  PktmonAnalyzer.exe -capture 60 -drop -detailed -threads 2\n";
 }
 
 int wmain(int argc, wchar_t* argv[]) {
@@ -182,7 +183,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
     if (argc == 1)
     {
-        capturePackets(options);
+        run(options);
         return 0;
 	}
 
@@ -262,7 +263,7 @@ int wmain(int argc, wchar_t* argv[]) {
             return 1;
         }
         
-        capturePackets(options);
+        run(options);
         return 0;
     }
     

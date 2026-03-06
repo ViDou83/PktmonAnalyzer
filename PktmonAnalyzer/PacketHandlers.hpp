@@ -13,186 +13,68 @@
 
 namespace Pktmon {
 
-    // Ring buffer packet handler (producer - callback thread)
-    //class RingBufferHandler : public IPacketHandler {
-    //public:
-    //    explicit RingBufferHandler(
-    //        std::shared_ptr<RingBuffer<PacketData>> ringBuffer,
-    //        CaptureOptions options = {},
-    //        std::shared_ptr<DataSourceCache> dataSourceCache = nullptr)
-    //        : IPacketHandler(options, dataSourceCache)
-    //        , m_ringBuffer(std::move(ringBuffer)) {
-    //    }
+    // Producer handler - pushes packets to ring buffer for consumer threads
+    class RingBufferHandler : public IPacketHandler {
+    public:
+        explicit RingBufferHandler(
+            std::shared_ptr<RingBuffer<PacketData>> ringBuffer,
+            std::shared_ptr<CaptureOptions> options,
+            std::shared_ptr<DataSourceCache> dataSourceCache)
+            : IPacketHandler(options)
+            , m_ringBuffer(std::move(ringBuffer))
+            , m_dataSourceCache(std::move(dataSourceCache)) {
+        }
 
-    //    void onPacketReceived(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) override {
-    //        if (m_captureOptions.droppedOnly) {
-    //            auto metadata = extractMetadata(data);
-    //            if (!metadata || metadata->DropReason == 0) {
-    //                return;
-    //            }
-    //        }
-    //        
-    //        PacketData packetData = PacketData::fromDescriptor(data);
-    //        
-    //        if (!m_ringBuffer->tryPush(std::move(packetData))) {
-    //            ++m_droppedPackets;
-    //        }
-    //    }
+        void onPacketReceived(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) override {
+            // Early filter for dropped-only mode
+            if (m_captureOptions->droppedOnly) {
+                auto* meta = reinterpret_cast<const PACKETMONITOR_STREAM_METADATA*>(
+                    static_cast<const std::byte*>(data.Data) + data.MetadataOffset);
+                if (meta->DropReason == 0) {
+                    return;
+                }
+            }
 
-    //    uint64_t getDroppedPackets() const {
-    //        return m_droppedPackets.load();
-    //    }
+            // Take ownership of packet data (copy into owned buffer)
+            PacketData packetData(data, m_captureOptions, m_dataSourceCache);
 
-    //private:
-    //    std::shared_ptr<RingBuffer<PacketData>> m_ringBuffer;
-    //    std::atomic<uint64_t> m_droppedPackets{0};
-    //};
+            // Non-blocking push to ring buffer
+            if (!m_ringBuffer->tryPush(std::move(packetData))) {
+                //std::cout << "Warning: Ring buffer full, dropping packet\n";
+                ++m_droppedPackets;
+            }
+        }
 
-    //// Multi-threaded packet processor
-    //class MultiThreadedPacketProcessor {
-    //public:
-    //    explicit MultiThreadedPacketProcessor(
-    //        std::shared_ptr<RingBuffer<PacketData>> ringBuffer,
-    //        size_t numThreads,
-    //        CaptureOptions options = {},
-    //        std::shared_ptr<DataSourceCache> dataSourceCache = nullptr)
-    //        : m_ringBuffer(std::move(ringBuffer))
-    //        , m_numThreads(numThreads)
-    //        , m_captureOptions(options)
-    //        , m_dataSourceCache(dataSourceCache)
-    //        , m_running(false) {
-    //    }
+        uint64_t getDroppedPackets() const noexcept {
+            return m_droppedPackets.load(std::memory_order_relaxed);
+        }
 
-    //    ~MultiThreadedPacketProcessor() {
-    //        stop();
-    //    }
-
-    //    // Start consumer threads
-    //    void start() {
-    //        if (m_running.load()) {
-    //            return;
-    //        }
-    //        
-    //        m_running.store(true);
-    //        
-    //        // Create worker threads
-    //        for (size_t i = 0; i < m_numThreads; ++i) {
-    //            m_threads.emplace_back(&MultiThreadedPacketProcessor::workerThread, this, i);
-    //        }
-    //        
-    //        std::cout << "Started " << m_numThreads << " consumer threads\n";
-    //    }
-
-    //    // Stop all consumer threads
-    //    void stop() {
-    //        if (!m_running.load()) {
-    //            return;
-    //        }
-    //        
-    //        m_running.store(false);
-    //        m_ringBuffer->stop();
-    //        
-    //        // Join all threads
-    //        for (auto& thread : m_threads) {
-    //            if (thread.joinable()) {
-    //                thread.join();
-    //            }
-    //        }
-    //        
-    //        m_threads.clear();
-    //        std::cout << "\nAll consumer threads stopped\n";
-    //    }
-
-    //    // Get statistics
-    //    struct ThreadStatistics {
-    //        size_t threadId;
-    //        uint64_t packetsProcessed;
-    //    };
-
-    //    std::vector<ThreadStatistics> getStatistics() const {
-    //        std::vector<ThreadStatistics> stats;
-    //        std::lock_guard<std::mutex> lock(m_statsMutex);
-    //        for (size_t i = 0; i < m_threadStats.size(); ++i) {
-    //            stats.push_back({i, m_threadStats[i].load()});
-    //        }
-    //        return stats;
-    //    }
-
-    //    uint64_t getTotalProcessed() const {
-    //        uint64_t total = 0;
-    //        std::lock_guard<std::mutex> lock(m_statsMutex);
-    //        for (const auto& stat : m_threadStats) {
-    //            total += stat.load();
-    //        }
-    //        return total;
-    //    }
-
-    //private:
-    //    void workerThread(size_t threadId) {
-    //        {
-    //            std::lock_guard<std::mutex> lock(m_statsMutex);
-    //            if (threadId >= m_threadStats.size()) {
-    //                m_threadStats.resize(threadId + 1);
-    //            }
-    //        }
-
-    //        while (m_running.load()) {
-    //            // Pop packet from ring buffer (blocking)
-    //            auto packetOpt = m_ringBuffer->pop();
-    //            
-    //            if (!packetOpt.has_value()) {
-    //                break; // Ring buffer stopped
-    //            }
-    //            
-    //            auto& packet = packetOpt.value();
-    //            processPacket(packet, threadId);
-    //            
-    //            m_threadStats[threadId]++;
-    //        }
-    //    }
-
-    //    void processPacket(const PacketData& packet, size_t threadId) {
-    //        std::lock_guard<std::mutex> lock(m_outputMutex);
-    //        
-    //        std::cout << "[Thread " << threadId << "] ";
-    //        std::cout << "Packet #" << packet.metadata.PktGroupId 
-    //                  << " Component:" << packet.metadata.ComponentId
-    //                  << " Length:" << packet.packet.size() << " bytes\n";
-    //    }
-
-    //    std::shared_ptr<RingBuffer<PacketData>> m_ringBuffer;
-    //    size_t m_numThreads;
-    //    CaptureOptions m_captureOptions;
-    //    std::shared_ptr<DataSourceCache> m_dataSourceCache;
-    //    
-    //    std::atomic<bool> m_running;
-    //    std::vector<std::thread> m_threads;
-    //    std::vector<std::atomic<uint64_t>> m_threadStats;
-    //    
-    //    mutable std::mutex m_statsMutex;
-    //    std::mutex m_outputMutex;
-    //};
+    private:
+        std::shared_ptr<RingBuffer<PacketData>> m_ringBuffer;
+        std::shared_ptr<DataSourceCache> m_dataSourceCache;
+        std::atomic<uint64_t> m_droppedPackets{0};
+    };
 
     // Enhanced hex dump handler with metadata
     class HexDumpHandler : public IPacketHandler {
     public:
-        HexDumpHandler() : IPacketHandler() {}
-
-        explicit HexDumpHandler(std::shared_ptr<CaptureOptions> options,
-                                std::shared_ptr<DataSourceCache> dataSourceCache)
-            : IPacketHandler(options, dataSourceCache) {}
-
+        explicit HexDumpHandler(std::shared_ptr<CaptureOptions> options) : IPacketHandler(options) {}
+        
         void onPacketReceived(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) override {
             // I want to display data.Data  pointer + data.PacketOffset
             std::cout << "Memory Address: " << static_cast<const void*>(static_cast<const std::byte*>(data.Data) + data.PacketOffset) << ", Length: " << std::dec << data.PacketLength << " bytes\n";
 
-            PacketData packetData(data, m_captureOptions, m_dataSourceCache);
+            auto& api = Pktmon::ApiManager::getInstance();
+
+            PacketData packetData(data, m_captureOptions, api.getDataSourceCache());
 
             if (!m_captureOptions->droppedOnly || 
 				m_captureOptions->droppedOnly && packetData.isDropped()
                 ){
-				packetData.printMetadata();
-                packetData.printPacketData();
+				std::ostringstream oss;
+				packetData.printMetadata(oss);
+                packetData.printPacketData(oss);
+				std::cout << oss.str();
             }
         }
     };
@@ -200,8 +82,9 @@ namespace Pktmon {
     // Statistics handler with metadata analysis
     class StatisticsHandler : public IPacketHandler {
     public:
-        StatisticsHandler() : IPacketHandler() {}
-        
+
+		StatisticsHandler() = default;
+
         void onPacketReceived(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) override {
 
 			// print data memory address and length for 
@@ -210,7 +93,9 @@ namespace Pktmon {
             m_missedWrites += data.MissedPacketWriteCount;
             m_missedReads += data.MissedPacketReadCount;
 
-            auto packetData = std::make_shared<Pktmon::PacketData>(data, m_captureOptions, m_dataSourceCache);
+            auto& api = Pktmon::ApiManager::getInstance();
+
+            auto packetData = std::make_shared<Pktmon::PacketData>(data, m_captureOptions, api.getDataSourceCache());
 			auto metadata = packetData->getMetadata();
             if (packetData) {
                 m_componentStats[metadata.ComponentId]++;

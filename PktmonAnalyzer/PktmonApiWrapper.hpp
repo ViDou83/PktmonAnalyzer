@@ -37,13 +37,11 @@ class RealtimeStream;
 // Packet handler interface
 class IPacketHandler {
 public:
-    IPacketHandler() : m_captureOptions({}), m_dataSourceCache(std::make_shared<DataSourceCache>()) {}
+	IPacketHandler() = default;
 
     // truncate packet data to user provided bytes for hex dump - default 64 bytes
-    explicit IPacketHandler(std::shared_ptr<CaptureOptions> options,
-                            std::shared_ptr<DataSourceCache> dataSourceCache)
-                            : m_captureOptions(options),
-                              m_dataSourceCache(std::move(dataSourceCache)) {}
+    explicit IPacketHandler(std::shared_ptr<CaptureOptions> options)
+        : m_captureOptions(options) {}
     virtual ~IPacketHandler() = default;
     virtual void onPacketReceived(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) = 0;
     virtual void onStreamEvent(const PACKETMONITOR_STREAM_EVENT_INFO& info,
@@ -152,8 +150,9 @@ public:
  //       return reinterpret_cast<const PACKETMONITOR_STREAM_METADATA*>(buffer + data.MetadataOffset);
  //   }
  //   // truncate packet data to user provided bytes for hex dump - default 64 bytes
+protected:
     std::shared_ptr<CaptureOptions> m_captureOptions;
-    std::shared_ptr<DataSourceCache> m_dataSourceCache;
+    //std::shared_ptr<DataSourceCache> m_dataSourceCache;
 
 private:
 
@@ -303,7 +302,6 @@ private:
         _In_opt_ VOID* context,
         _In_ PACKETMONITOR_STREAM_DATA_DESCRIPTOR const* data);
     
-    std::shared_ptr<SpmcRing<PacketData>> m_ringBuffer;
     std::shared_ptr<Session> m_session;
     std::shared_ptr<IPacketHandler> m_handler;
     PACKETMONITOR_REALTIME_STREAM m_streamHandle{nullptr};
