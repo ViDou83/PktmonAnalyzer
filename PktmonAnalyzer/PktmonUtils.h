@@ -9,8 +9,6 @@
 #include <unordered_map>   // Add this - for std::unordered_map
 #include "Pktmonapi.hpp"   // Add this - for PACKETMONITOR_DATA_SOURCE_KIND, etc.
 
-#include <basetsd.h>
-
 // Helper function to format timestamp
 inline std::string formatTimestamp(const LARGE_INTEGER& timestamp) {
     // Convert Windows FILETIME (100-nanosecond intervals since 1601-01-01)
@@ -36,12 +34,11 @@ inline std::string formatTimestamp(const LARGE_INTEGER& timestamp) {
 
 inline std::string wstringToString(const std::wstring& wstr) {
 	std::string componentStr = "UNKNOWN";
-    auto componentName = wstr;
-    if (!componentName.empty()) {
-        int size = WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (!wstr.empty()) {
+        int size = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
         if (size > 0) {
             componentStr.resize(size - 1);
-            WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, &componentStr[0], size, nullptr, nullptr);
+            WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &componentStr[0], size, nullptr, nullptr);
         }
     }
 	return componentStr;
@@ -56,7 +53,7 @@ struct CaptureOptions {
     bool droppedOnly = false;
     bool useMultiThreaded = true;
     size_t numConsumerThreads = 4; // Default to 4 consumer threads in multi-threaded mode
-    size_t ringBufferSize = 2 << 20; //2K
+    size_t ringBufferSize = 2 * 1024;
 };
 
 // Data source cache for efficient lookup

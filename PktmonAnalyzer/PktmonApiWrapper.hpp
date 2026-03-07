@@ -12,12 +12,96 @@
 #include <sstream>
 #include <ostream>
 #include <span>
+#include <concurrent_unordered_map.h>  // PPL
+
 #include "Pktmonapi.hpp"
 #include "PktMonLoc.hpp"
 #include "PacketData.hpp"
 #include "RingBuffer.hpp"
 
 namespace Pktmon {
+
+    // Packet handler interface
+class IPacketHandler {
+
+public:
+    IPacketHandler() = default;
+
+    // truncate packet data to user provided bytes for hex dump - default 64 bytes
+	explicit IPacketHandler(std::shared_ptr<CaptureOptions> options, std::shared_ptr<DataSourceCache> dataSourceCache)
+        : m_captureOptions(options), m_dataSourceCache(std::move(dataSourceCache)) {
+    }
+    virtual ~IPacketHandler() = default;
+    virtual void onPacketReceived(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) = 0;
+    virtual void onStreamEvent(const PACKETMONITOR_STREAM_EVENT_INFO& info,
+        PACKETMONITOR_STREAM_EVENT_KIND kind) {
+    }
+
+    // get truncation size for hex dump
+    UINT16 getTruncationSize() const noexcept { return m_captureOptions->truncationSize; }
+    void setRingBuffer(std::shared_ptr<RingBuffer<PacketData>> ringBuffer) { m_ringBuffer = std::move(ringBuffer); }
+
+    void printStatistics() const {
+        constexpr auto separator = "==========================\n";
+
+        std::cout << separator;
+
+        std::cout << "\n=== Capture Statistics ===\n";
+        std::cout << "Total Packets: " << m_packetCount << "\n";
+        std::cout << "Total Bytes: " << m_totalBytes << "\n";
+        std::cout << "Dropped Packets: " << m_droppedPackets << "\n";
+        std::cout << "Missed Writes: " << m_missedWrites << "\n";
+        std::cout << "Missed Reads: " << m_missedReads << "\n";
+
+        if (!m_componentStats.empty()) {
+            std::cout << "\n--- Per-Component Statistics ---\n";
+            for (const auto& [componentId, count] : m_componentStats) {
+                std::cout << "  Component " << componentId << ": " << count->load() << " packets\n";
+            }
+        }
+
+        if (!m_processorStats.empty()) {
+            std::cout << "\n--- Per-Processor Statistics ---\n";
+            for (const auto& [processor, count] : m_processorStats) {
+                std::cout << "  Processor " << processor << ": " << count->load() << " packets\n";
+            }
+        }
+
+        if (!m_dropReasons.empty()) {
+            std::cout << "\n--- Drop Reasons ---\n";
+            for (const auto& [reason, count] : m_dropReasons) {
+                std::cout << "  Reason 0x" << std::hex << reason << " " << "count:" << std::dec << count->load() << "\n";
+            }
+        }
+
+        std::cout << separator;
+    }
+
+protected:
+    static std::atomic<uint64_t>& get_or_create_counter(
+        concurrency::concurrent_unordered_map<uint32_t, std::shared_ptr<std::atomic<uint64_t>>>& m,
+        uint32_t key)
+    {
+        // insert a ptr if missing; safe because shared_ptr is copy/move
+        auto [it, inserted] = m.insert({ key, std::make_shared<std::atomic<uint64_t>>(0) });
+        return *(it->second);
+    }
+
+    std::shared_ptr<CaptureOptions> m_captureOptions;
+    //std::shared_ptr<DataSourceCache> m_dataSourceCache;
+    std::shared_ptr<RingBuffer<PacketData>> m_ringBuffer;
+    std::atomic<uint64_t> m_packetCount{ 0 };
+    std::atomic<uint64_t> m_totalBytes{ 0 };
+    std::atomic<uint64_t> m_droppedPackets{ 0 };
+    std::atomic<uint64_t> m_missedWrites{ 0 };
+    std::atomic<uint64_t> m_missedReads{ 0 };
+    concurrency::concurrent_unordered_map<uint32_t, std::shared_ptr<std::atomic<uint64_t>>> m_componentStats;
+    concurrency::concurrent_unordered_map<uint32_t, std::shared_ptr<std::atomic<uint64_t>>> m_processorStats;
+    concurrency::concurrent_unordered_map<uint32_t, std::shared_ptr<std::atomic<uint64_t>>> m_dropReasons;
+    std::shared_ptr<DataSourceCache> m_dataSourceCache;
+
+private:
+};
 
 // Exception classes
 class PktmonException : public std::runtime_error {
@@ -33,130 +117,6 @@ private:
 // Forward declarations
 class Session;
 class RealtimeStream;
-
-// Packet handler interface
-class IPacketHandler {
-public:
-	IPacketHandler() = default;
-
-    // truncate packet data to user provided bytes for hex dump - default 64 bytes
-    explicit IPacketHandler(std::shared_ptr<CaptureOptions> options)
-        : m_captureOptions(options) {}
-    virtual ~IPacketHandler() = default;
-    virtual void onPacketReceived(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) = 0;
-    virtual void onStreamEvent(const PACKETMONITOR_STREAM_EVENT_INFO& info,
-        PACKETMONITOR_STREAM_EVENT_KIND kind) {
-    }
-
-    // get truncation size for hex dump
-    UINT16 getTruncationSize() const noexcept { return m_captureOptions->truncationSize; }
-
-//protected:
-   // void printMetadata(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data, auto metadata = extractMetadata(data)) {
-
-   //     std::cout << "======================================================\n";
-   //     if (m_captureOptions.showDetailedMetadata) {
-   //         std::cout << "Timestamp:        " << formatTimestamp(metadata->TimeStamp) << "\n";
-			//std::cout << "Packet Group ID:  " << std::dec << metadata->PktGroupId << "\n";
-   //         std::cout << "Packet Count:     " << std::dec << metadata->PktCount << "\n";
-   //         std::cout << "Appearance Count: " << std::dec << metadata->AppearanceCount << "\n";
-   //         std::cout << "Direction:        " << std::dec << metadata->DirectionName << "\n";
-   //         std::cout << "Packet Type:      " << std::dec << metadata->PacketType << "\n";
-   //         if (m_dataSourceCache->size()) {
-   //             std::wstring componentName = m_dataSourceCache->getComponentName(metadata->ComponentId);
-   //             std::string componentStr;
-   //             if (!componentName.empty()) {
-   //                 int size = WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, nullptr, 0, nullptr, nullptr);
-   //                 if (size > 0) {
-   //                     componentStr.resize(size - 1);
-   //                     WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, &componentStr[0], size, nullptr, nullptr);
-   //                 }
-   //             }
-   //             std::cout << "Component:        " << std::left << 
-   //                 (componentStr + " (ID:" + std::to_string(metadata->ComponentId) + ")") << "\n";
-
-   //         } else {
-   //             std::cout << "Component: " << std::setw(31) << metadata->ComponentId << "\n";
-   //         }
-   //         std::cout << "Edge ID:          " << std::dec << metadata->EdgeId << "\n";
-			//std::cout << "Filter ID:        " << std::dec << metadata->FilterId << "\n";
-   //         std::cout << "Processor:        " << std::dec << metadata->Processor << "\n";
-   //         std::cout << "Packet Length:    " << std::dec << data.PacketLength << " bytes\n";
-
-   //         if (metadata->DropReason != 0) {
-   //             std::cout << "!!!! Drop Reason   : " << static_cast<PKTMON_DROP_REASON>(metadata->DropReason) << "\n";
-   //             std::cout << "!!!! Drop Location : " << static_cast<PKTMON_DROP_LOCATION>(metadata->DropLocation) << "\n";
-   //         }
-   //     } else {
-   //         std::cout << "Timestamp: " << std::left << std::setw(30) << formatTimestamp(metadata->TimeStamp) << "\n";
-   //         std::cout << "Packet:    " << std::setw(8) << std::dec << metadata->PktGroupId << "\n";
-   //         if (m_dataSourceCache->size()) {
-   //             std::wstring componentName = m_dataSourceCache->getComponentName(metadata->ComponentId);
-   //             std::string componentStr;
-   //             if (!componentName.empty()) {
-   //                 int size = WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, nullptr, 0, nullptr, nullptr);
-   //                 if (size > 0) {
-   //                     componentStr.resize(size - 1);
-   //                     WideCharToMultiByte(CP_UTF8, 0, componentName.c_str(), -1, &componentStr[0], size, nullptr, nullptr);
-   //                 }
-   //             }
-   //             std::cout << "Component: " << std::left <<
-   //                 (componentStr + " (ID:" + std::to_string(metadata->ComponentId) + ")") << "\n";
-
-   //         } else {
-   //             std::cout << "Component: " << std::setw(31) << metadata->ComponentId << "\n";
-   //         }
-   //         std::cout << "Processor: " << std::dec << metadata->Processor << "\n";
-   //         std::cout << "Length:    " << std::dec << data.PacketLength << "\n";
-   //     }
-
-   //     if (metadata->DropReason != 0) {
-   //         std::cout << "!!!! Drop Reason   : " << static_cast<PKTMON_DROP_REASON>(metadata->DropReason) << "\n";
-   //         std::cout << "!!!! Drop Location : " << static_cast<PKTMON_DROP_LOCATION>(metadata->DropLocation) << "\n";
-   //     }
-
-   //     std::cout << "======================================================" << std::endl;
-   //   
-   // }
-
-   // void printPacketData(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) {
-   //     auto buffer = static_cast<const BYTE*>(data.Data);
-   //     std::span<const BYTE> packetSpan(buffer + data.PacketOffset,
-   //         std::min<size_t>(m_captureOptions.truncationSize, data.PacketLength));
-
-   //     std::cout << "Packet: " << packetSpan.size() << " bytes\n";
-
-   //     for (size_t i = 0; i < packetSpan.size(); ++i) {
-   //         if (i % 16 == 0) {
-   //             std::cout << std::hex << std::uppercase << std::right << std::setfill('0') << std::setw(4) << i << ": ";
-   //         }
-   //         std::cout << std::hex << std::uppercase << std::right << std::setfill('0') << std::setw(2) << static_cast<int>(packetSpan[i]) << " ";
-   //         if ((i + 1) % 16 == 0) {
-   //             std::cout << std::endl;
-   //         }
-   //     }
-   //     std::cout << std::endl;
-   // }
-
- //   // Helper function to safely extract metadata
- //   inline const PACKETMONITOR_STREAM_METADATA* extractMetadata(
- //       const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) {
-
- //       if (data.MetadataOffset + sizeof(PACKETMONITOR_STREAM_METADATA) > data.DataSize) {
- //           return nullptr; // Invalid offset
- //       }
-
- //       auto buffer = static_cast<const BYTE*>(data.Data);
- //       return reinterpret_cast<const PACKETMONITOR_STREAM_METADATA*>(buffer + data.MetadataOffset);
- //   }
- //   // truncate packet data to user provided bytes for hex dump - default 64 bytes
-protected:
-    std::shared_ptr<CaptureOptions> m_captureOptions;
-    //std::shared_ptr<DataSourceCache> m_dataSourceCache;
-
-private:
-
-};
 
 // API Manager (Singleton)
 class ApiManager {
@@ -327,7 +287,8 @@ public:
     std::shared_ptr<RealtimeStream> createRealtimeStream(
         std::shared_ptr<IPacketHandler> handler,
         UINT16 bufferSizeMultiplier = 1,
-        UINT16 truncationSize = 0);
+        UINT16 truncationSize = 0,
+        size_t ringBufferSize = 1024);
 
 	//get manager const reference
 	const ApiManager& getManager() const noexcept { return m_manager; }
@@ -361,13 +322,16 @@ public:
     
     PACKETMONITOR_REALTIME_STREAM getHandle() const noexcept { return m_streamHandle; }
 
+    std::shared_ptr<RingBuffer<PacketData>> getRingBuffer() const noexcept { return m_ringBuffer; }
+
 private:
     friend class Session;
     
     RealtimeStream(std::shared_ptr<Session> session,
                    std::shared_ptr<IPacketHandler> handler,
                    UINT16 bufferSizeMultiplier,
-                   UINT16 truncationSize);
+                   UINT16 truncationSize,
+                   size_t ringBufferSize);
     
     void create();
     void attachToSession();
@@ -388,6 +352,8 @@ private:
     UINT16 m_bufferSizeMultiplier;
     UINT16 m_truncationSize;
     mutable std::mutex m_mutex;
+    std::shared_ptr<RingBuffer<PacketData>> m_ringBuffer;
+	size_t m_ringBufferSize;
 };
 
 } // namespace Pktmon

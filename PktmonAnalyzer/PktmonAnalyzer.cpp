@@ -1,12 +1,10 @@
 ﻿// Windows
 #include <windows.h>
-
 // STL
 #include <iostream>
 #include <thread>
 #include <chrono>
 #include <string>
-
 //local
 #include "Pktmonapi.hpp"
 #include "PktmonApiWrapper.hpp"
@@ -18,13 +16,12 @@
 // Dedicated output thread - uses lock-free RingBuffer for messages
 void outputThreadFunc(const std::shared_ptr<RingBuffer<std::string>>& outputRingBuffer,
                       std::atomic<bool>& running) {
+	//std::cout << "Output thread " << std::this_thread::get_id() << " started\n";
     while (running.load(std::memory_order_acquire) || !outputRingBuffer->empty()) {
         if (auto msg = outputRingBuffer->tryPop()) {
-            if (msg != std::nullopt) {
-                std::cout << *msg;
-            }
+            std::cout << *msg;
         } else {
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 }
@@ -56,7 +53,8 @@ void printDataSources() {
 void processPacket(const std::shared_ptr<RingBuffer<Pktmon::PacketData>>& packetRingBuffer,
                    const std::shared_ptr<RingBuffer<std::string>>& outputRingBuffer,
                    const std::chrono::steady_clock::time_point& endTime) {
-    while (!packetRingBuffer->empty() || std::chrono::steady_clock::now() < endTime) {
+	//std::cout << "Consumer thread " << std::this_thread::get_id() << " started\n";
+    while (std::chrono::steady_clock::now() < endTime || !packetRingBuffer->empty()) {
         if (auto entry = packetRingBuffer->tryPop()) {
             // Got a packet - process it
             std::ostringstream oss;
@@ -64,9 +62,7 @@ void processPacket(const std::shared_ptr<RingBuffer<Pktmon::PacketData>>& packet
 
             packet.printMetadata(oss);
             packet.printPacketData(oss);
-
-            std::string output = oss.str();
-            outputRingBuffer->tryPush(std::move(output));
+            outputRingBuffer->tryPush(std::move(oss.str()));
         } else {
             // Buffer empty - wait a bit before checking again (avoid busy-spin)
             std::this_thread::sleep_for(std::chrono::microseconds(100));
@@ -77,25 +73,26 @@ void processPacket(const std::shared_ptr<RingBuffer<Pktmon::PacketData>>& packet
 static void run(const std::shared_ptr<CaptureOptions>& options) {
     // Original single-threaded implementation
     try {
+		// Create ring buffers for packets and output messages
+        auto outputRingBuffer = std::make_shared<RingBuffer<std::string>>(options->ringBufferSize * 4);
+
+		// Initialize API and create session
         auto& api = Pktmon::ApiManager::getInstance();
         api.initialize(PACKETMONITOR_API_VERSION_1_0);
-
+		// Create a session with a unique name (could also use a GUID or timestamp)
         auto session = api.createSession(L"MyCapture Session");
-
-        auto packetRingBuffer = std::make_shared<RingBuffer<Pktmon::PacketData>>(options->ringBufferSize);
-
-        auto ringBufferHandler = std::make_shared<Pktmon::RingBufferHandler>(
-            packetRingBuffer, options, api.getDataSourceCache());
-
-        auto outputRingBuffer = std::make_shared<RingBuffer<std::string>>(options->ringBufferSize*4);
-
-        auto statsHandler = std::make_shared<Pktmon::StatisticsHandler>();
-
-        auto stream1 = session->createRealtimeStream(ringBufferHandler, 2, options->truncationSize);
-        auto stream2 = session->createRealtimeStream(statsHandler, 2, options->truncationSize);
-
+		// Create and register packet handler that pushes to ring buffer
+        auto ringBufferHandler = std::make_shared<Pktmon::RingBufferHandler>(options, api.getDataSourceCache());
+		// Create statistics handler to track capture stats
+        //auto statsHandler = std::make_shared<Pktmon::StatisticsHandler>();
+		// Register both handlers to the session (both get all packets)
+        auto stream1 = session->createRealtimeStream(ringBufferHandler, 2, options->truncationSize, options->ringBufferSize);
+        //auto stream2 = session->createRealtimeStream(statsHandler, 2, options->truncationSize, options->ringBufferSize);
+		// Get the ring buffer from the handler to share with consumer threads
+        auto packetRingBuffer = stream1->getRingBuffer();
+		// Start the capture session
         session->start();
-
+		// Print capture configuration
         std::cout << "Capturing for " << options->durationSeconds << " seconds";
         if (options->truncationSize > 0) {
             std::cout << " (truncating to " << options->truncationSize << " bytes)";
@@ -103,22 +100,17 @@ static void run(const std::shared_ptr<CaptureOptions>& options) {
         if (options->droppedOnly) {
             std::cout << " [DROPPED PACKETS ONLY]";
         }
-
         std::cout << "\n";
-
-        // Process packets in real-time as they arrive (time-based loop)
+		// Initialize end time for capture duration
         auto endTime = std::chrono::steady_clock::now() + std::chrono::seconds(options->durationSeconds);
-
-
-        std::atomic<bool> outputRunning(true);
-        std::thread outputThread(outputThreadFunc, outputRingBuffer, std::ref(outputRunning));
-
         // create a thread to stop the session after capture duration ends (in case session->stop() blocks)
         std::thread stopThread([session, endTime]() {
             std::this_thread::sleep_until(endTime);
             session->stop();
             });
-
+		// Start the output thread 
+        std::atomic<bool> outputRunning(true);
+        std::thread outputThread(outputThreadFunc, outputRingBuffer, std::ref(outputRunning));
 		// Consumer threads to process packets from ring buffer
         std::vector<std::thread> consumerThreads;
 		const size_t numThreads = options->useMultiThreaded ? options->numConsumerThreads : 1;
@@ -126,38 +118,35 @@ static void run(const std::shared_ptr<CaptureOptions>& options) {
         for (size_t i = 0; i < numThreads; i++) {
             consumerThreads.emplace_back(processPacket, packetRingBuffer, outputRingBuffer, endTime);
         }
-            
 		// Wait for stop thread to finish (ensures session is stopped)
         if (stopThread.joinable()) {
             stopThread.join();
 		}
-
 		// Wait for capture duration to elapse
         for (auto& thread : consumerThreads) {
             if (thread.joinable()) {
                 thread.join();
             }
         }
-
         // Stop the output thread
 		outputRunning.store(false, std::memory_order_release);
-
+		// Wait for output thread to finish processing remaining messages
         if (outputThread.joinable()) {
             outputThread.join();
         }
-
+		// Capture complete - print summary
 		std::cout << "\n";
 		std::cout << "**** Capture complete ****\n";
         std::cout << "\n";
-
 		// print ring buffers statistics
 		std::cout << "=== Packet Ring Buffer ===\n";
 		packetRingBuffer->printStatistics();
 		std::cout << "\n=== Output Ring Buffer ===\n";
 		outputRingBuffer->printStatistics();
-
+		std::cout << "\n=== Capture Statistics ===\n";
+		ringBufferHandler->printStatistics();
 		// capture complete - print statistics
-        statsHandler->printStatistics();
+        //statsHandler->printStatistics();
     } catch (const Pktmon::PktmonException& ex) {
         std::cerr << "Error: " << ex.what() << " (HRESULT: 0x" << std::hex << ex.getHResult() << ")\n";
     } catch (const std::exception& ex) {
@@ -180,7 +169,7 @@ void printUsage() {
         << "  -nometadata              : Hide metadata in output\n"
         << "  -drop                    : Show only dropped packets\n"
         << "  -threads <count>         : Number of consumer threads (enables multi-threaded mode)\n"
-        << "  -bufsize <count>         : Ring buffer size (default: 10000)\n"
+        << "  -bufsize <count>         : Ring buffer size (default: 2K)\n"
         << "\n"
         << "Examples:\n"
         << "  PktmonAnalyzer.exe -enum\n"
@@ -194,8 +183,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
     std::shared_ptr<CaptureOptions> options = std::make_shared<CaptureOptions>();
 
-    if (argc == 1)
-    {
+    if (argc == 1) {
         run(options);
         return 0;
 	}

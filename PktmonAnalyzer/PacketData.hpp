@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <format>
 #include <sstream>
+#include <array>
 
 namespace Pktmon {
 
@@ -23,28 +24,20 @@ public:
 
     explicit PacketData(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data,
         std::shared_ptr<CaptureOptions> options,
-        std::shared_ptr<DataSourceCache> dataSourceCache)
+        std::shared_ptr<DataSourceCache> dataSourceCache) noexcept
         : m_captureOptions(options),
 		m_dataSourceCache(dataSourceCache)
     {
- /*       m_metadata = std::span<const std::byte>(
-            static_cast<const std::byte*>(data.Data) + data.MetadataOffset,
-			sizeof(PACKETMONITOR_STREAM_METADATA));
+        m_packetLength = (data.DataSize <= 9000) ? data.DataSize : 9000;
 
-        m_packet = std::span<const std::byte>(
+        std::memcpy(m_packet.data(),
             static_cast<const std::byte*>(data.Data) + data.PacketOffset,
-			data.PacketLength);*/
-        m_metadata.reserve(sizeof(PACKETMONITOR_STREAM_METADATA));
-        m_metadata.assign(
+            m_packetLength);
+
+        std::memcpy(m_metadata.data(),
             static_cast<const std::byte*>(data.Data) + data.MetadataOffset,
-            static_cast<const std::byte*>(data.Data) + data.MetadataOffset + sizeof(PACKETMONITOR_STREAM_METADATA));
+            m_metadata.size());
 
-        m_packet.reserve(data.DataSize);
-        m_packet.assign(
-            static_cast<const std::byte*>(data.Data) + data.PacketOffset,
-            static_cast<const std::byte*>(data.Data) + data.PacketOffset + data.DataSize);
-
-        m_packetLength = data.DataSize;
         m_missedWrite = data.MissedPacketWriteCount;
         m_missedRead = data.MissedPacketReadCount;
     }
@@ -111,17 +104,16 @@ public:
             }
             oss << std::hex << std::uppercase << std::right << std::setfill('0') << std::setw(2) << static_cast<int>(m_packet[i]) << " ";
             if ((i + 1) % 16 == 0) {
-                oss << std::endl;
+                oss << "\n";
             }
         }
-        oss << std::endl;
+        oss << "\n";
     }
 
 
 private:
-
-    std::vector<std::byte> m_metadata{};
-    std::vector<std::byte> m_packet{};
+    std::array<std::byte, sizeof(PACKETMONITOR_STREAM_METADATA)> m_metadata;
+    std::array<std::byte, 9000> m_packet;
 
     uint32_t m_packetLength{};
     uint32_t m_missedWrite{};

@@ -174,7 +174,7 @@ Session::Session(const std::wstring& name, HANDLE sessionHandle, ApiManager& man
 Session::~Session() {
     stop();
     if (m_sessionHandle) {
-        CloseHandle(m_sessionHandle);
+        m_manager.m_pfnCloseSessionHandle(m_sessionHandle);
     }
 }
 
@@ -211,14 +211,16 @@ void Session::stop() {
 std::shared_ptr<RealtimeStream> Session::createRealtimeStream(
     std::shared_ptr<IPacketHandler> handler,
     UINT16 bufferSizeMultiplier,
-    UINT16 truncationSize) {
-    
+    UINT16 truncationSize,
+    size_t ringBufferSize) {
+
     // Set the data source cache in the handler
     //handler->setDataSourceCache(m_manager.getDataSourceCache());
-    
     auto stream = std::shared_ptr<RealtimeStream>(
-        new RealtimeStream(shared_from_this(), handler, bufferSizeMultiplier, truncationSize));
+        new RealtimeStream(shared_from_this(), handler, bufferSizeMultiplier, truncationSize, ringBufferSize));
     
+    handler->setRingBuffer(std::move(stream->getRingBuffer()));
+
     stream->create();
     stream->attachToSession();
     
@@ -235,17 +237,20 @@ std::shared_ptr<RealtimeStream> Session::createRealtimeStream(
 RealtimeStream::RealtimeStream(std::shared_ptr<Session> session,
     std::shared_ptr<IPacketHandler> handler,
     UINT16 bufferSizeMultiplier,
-    UINT16 truncationSize)
+    UINT16 truncationSize,
+    size_t ringBufferSize)
     : m_session(std::move(session))
     , m_handler(std::move(handler))
     , m_bufferSizeMultiplier(bufferSizeMultiplier)
     , m_truncationSize(truncationSize)
+    , m_ringBufferSize(ringBufferSize)
 {
-
+	m_ringBuffer = std::make_shared<RingBuffer<PacketData>>(ringBufferSize);
 }
 
 RealtimeStream::~RealtimeStream() {
     // Cleanup is handled by the API
+    m_session->getManager().m_pfnCloseRealtimeStream(m_streamHandle);
 }
 
 void RealtimeStream::create() {
