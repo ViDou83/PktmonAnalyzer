@@ -52,8 +52,22 @@ struct CaptureOptions {
     bool showDetailedMetadata = false;
     bool droppedOnly = false;
     bool useMultiThreaded = true;
-    size_t numConsumerThreads = 4; // Default to 4 consumer threads in multi-threaded mode
+	size_t numConsumerThreads = std::thread::hardware_concurrency() > 0 ? std::thread::hardware_concurrency()/2 : 1; // Default to half of CPU cores or 4 if undetectable
     size_t ringBufferSize = 2 * 1024;
+
+    void display() const {
+        std::cout << "Capture Options:\n"
+            << "  Duration: " << durationSeconds << " seconds\n"
+            << "  Truncation Size: " << truncationSize << " bytes\n"
+            << "  Display Length: " << displayLength << " bytes\n"
+            << "  Show Detailed Metadata: " << (showDetailedMetadata ? "Yes" : "No") << "\n"
+            << "  Dropped Packets Only: " << (droppedOnly ? "Yes" : "No") << "\n"
+            << "  Multi-threaded Mode: " << (useMultiThreaded ? "Yes" : "No") << "\n";
+        if (useMultiThreaded) {
+            std::cout << "  Consumer Threads: " << numConsumerThreads << "\n";
+        }
+        std::cout << "  Ring Buffer Size: " << ringBufferSize << "\n";
+	}
 };
 
 // Data source cache for efficient lookup

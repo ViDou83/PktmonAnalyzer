@@ -9,9 +9,9 @@
 #include <iostream>
 
 struct Statistics {
-    alignas(64) std::atomic<uint64_t> totalPushed{ 0 };
-    alignas(64) std::atomic<uint64_t> totalPopped{ 0 };
-    alignas(64) std::atomic<uint64_t> pushFailures{ 0 };
+    alignas(std::hardware_destructive_interference_size) std::atomic<uint64_t> totalPushed{ 0 };
+    alignas(std::hardware_destructive_interference_size) std::atomic<uint64_t> totalPopped{ 0 };
+    alignas(std::hardware_destructive_interference_size) std::atomic<uint64_t> pushFailures{ 0 };
 };
 
 template <typename T>
@@ -28,8 +28,11 @@ public:
         }
     }
 
+    bool tryPush(T&& t) { return push(std::move(t)); }
+    bool tryPush(const T& t) { return push(t); }
+
     // Single producer only
-    bool tryPush(T&& v) {
+    bool push(T&& v) {
         const std::size_t h = head_.load(std::memory_order_relaxed);
         const std::size_t t = tail_.load(std::memory_order_acquire); // observe consumer progress
         if (h - t >= cap_ || buf_[h & mask_].ready.load(std::memory_order_relaxed)) {
@@ -61,10 +64,6 @@ public:
 				buf_[t & mask_].ready.store(false, std::memory_order_relaxed); // mark slot empty
                 stats_.totalPopped.fetch_add(1, std::memory_order_relaxed);
                 return out;
-            } else {
-                // Slot not ready yet, even though h > t. 
-                // Yield to let the producer finish its store.
-                std::this_thread::yield();
             }
             // CAS failed: 't' updated to latest tail, loop and retry
         }
@@ -88,7 +87,7 @@ private:
     struct slot 
         {
         T data;
-        alignas(64) std::atomic<bool> ready{ false };
+        alignas(std::hardware_destructive_interference_size) std::atomic<bool> ready{ false };
 	};  
 
     const std::size_t cap_;
@@ -96,8 +95,10 @@ private:
     std::vector<slot> buf_;
 
     // head: only producer writes, consumers read
-    alignas(64) std::atomic<std::size_t> head_{ 0 };
+    alignas(std::hardware_destructive_interference_size) std::atomic<std::size_t> head_{ 0 };
     // tail: consumers contend here (CAS), producer reads
-    alignas(64) std::atomic<std::size_t> tail_{ 0 };
-    alignas(64) Statistics stats_;
+    alignas(std::hardware_destructive_interference_size) std::atomic<std::size_t> tail_{ 0 };
+    alignas(std::hardware_destructive_interference_size) Statistics stats_;
+
+    static_assert(std::atomic<size_t>::is_always_lock_free);
 };

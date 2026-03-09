@@ -16,9 +16,9 @@ namespace Pktmon {
     class RingBufferHandler : public IPacketHandler {
     public:
         explicit RingBufferHandler(
-            std::shared_ptr<CaptureOptions> options,
-            std::shared_ptr<DataSourceCache> dataSourceCache)
-            : IPacketHandler(options, std::move(dataSourceCache))
+            std::shared_ptr<const CaptureOptions> options,
+            std::shared_ptr<const DataSourceCache> dataSourceCache)
+            : IPacketHandler(std::move(options), std::move(dataSourceCache))
         {}
 
         void onPacketReceived(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) override {

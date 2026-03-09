@@ -121,6 +121,7 @@ ApiManager::enumerateDataSources(PACKETMONITOR_DATA_SOURCE_KIND kind, bool inclu
     SIZE_T bytesNeeded = 0;
     HRESULT hr;
     
+	// First call to get required buffer size
     do {
         hr = m_pfnEnumDataSources(
             m_handle,
@@ -219,7 +220,7 @@ std::shared_ptr<RealtimeStream> Session::createRealtimeStream(
     auto stream = std::shared_ptr<RealtimeStream>(
         new RealtimeStream(shared_from_this(), handler, bufferSizeMultiplier, truncationSize, ringBufferSize));
     
-    handler->setRingBuffer(std::move(stream->getRingBuffer()));
+    handler->attachRingBuffer(std::move(stream->getRingBuffer()));
 
     stream->create();
     stream->attachToSession();

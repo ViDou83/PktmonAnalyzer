@@ -23,10 +23,10 @@ public:
     PacketData() = default;
 
     explicit PacketData(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data,
-        std::shared_ptr<CaptureOptions> options,
-        std::shared_ptr<DataSourceCache> dataSourceCache) noexcept
-        : m_captureOptions(options),
-		m_dataSourceCache(dataSourceCache)
+        std::shared_ptr<const CaptureOptions> options,
+        std::shared_ptr<const DataSourceCache> dataSourceCache) noexcept
+        : m_captureOptions(std::move(options)),
+		m_dataSourceCache(std::move(dataSourceCache))
     {
         m_packetLength = (data.DataSize <= 9000) ? data.DataSize : 9000;
 
@@ -118,8 +118,8 @@ private:
     uint32_t m_packetLength{};
     uint32_t m_missedWrite{};
     uint32_t m_missedRead{};
-	std::shared_ptr<CaptureOptions> m_captureOptions;
-	std::shared_ptr<DataSourceCache> m_dataSourceCache;
+    std::shared_ptr<const CaptureOptions> m_captureOptions;
+    std::shared_ptr<const DataSourceCache> m_dataSourceCache;
 
     static const PACKETMONITOR_STREAM_METADATA* extractMetadata(
         const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) {

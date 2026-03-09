@@ -28,8 +28,9 @@ public:
     IPacketHandler() = default;
 
     // truncate packet data to user provided bytes for hex dump - default 64 bytes
-	explicit IPacketHandler(std::shared_ptr<CaptureOptions> options, std::shared_ptr<DataSourceCache> dataSourceCache)
-        : m_captureOptions(options), m_dataSourceCache(std::move(dataSourceCache)) {
+	explicit IPacketHandler(std::shared_ptr<const CaptureOptions> options, 
+                        std::shared_ptr<const DataSourceCache> dataSourceCache)
+        : m_captureOptions(std::move(options)), m_dataSourceCache(std::move(dataSourceCache)) {
     }
     virtual ~IPacketHandler() = default;
     virtual void onPacketReceived(const PACKETMONITOR_STREAM_DATA_DESCRIPTOR& data) = 0;
@@ -39,7 +40,7 @@ public:
 
     // get truncation size for hex dump
     UINT16 getTruncationSize() const noexcept { return m_captureOptions->truncationSize; }
-    void setRingBuffer(std::shared_ptr<RingBuffer<PacketData>> ringBuffer) { m_ringBuffer = std::move(ringBuffer); }
+    void attachRingBuffer(std::shared_ptr<RingBuffer<PacketData>> ringBuffer) { m_ringBuffer = ringBuffer; }
 
     void printStatistics() const {
         constexpr auto separator = "==========================\n";
@@ -87,9 +88,10 @@ protected:
         return *(it->second);
     }
 
-    std::shared_ptr<CaptureOptions> m_captureOptions;
-    //std::shared_ptr<DataSourceCache> m_dataSourceCache;
+    std::shared_ptr<const CaptureOptions> m_captureOptions;
     std::shared_ptr<RingBuffer<PacketData>> m_ringBuffer;
+    std::shared_ptr<const DataSourceCache> m_dataSourceCache;
+
     std::atomic<uint64_t> m_packetCount{ 0 };
     std::atomic<uint64_t> m_totalBytes{ 0 };
     std::atomic<uint64_t> m_droppedPackets{ 0 };
@@ -98,7 +100,6 @@ protected:
     concurrency::concurrent_unordered_map<uint32_t, std::shared_ptr<std::atomic<uint64_t>>> m_componentStats;
     concurrency::concurrent_unordered_map<uint32_t, std::shared_ptr<std::atomic<uint64_t>>> m_processorStats;
     concurrency::concurrent_unordered_map<uint32_t, std::shared_ptr<std::atomic<uint64_t>>> m_dropReasons;
-    std::shared_ptr<DataSourceCache> m_dataSourceCache;
 
 private:
 };

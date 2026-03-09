@@ -70,9 +70,11 @@ void processPacket(const std::shared_ptr<RingBuffer<Pktmon::PacketData>>& packet
     }
 }
 
-static void run(const std::shared_ptr<CaptureOptions>& options) {
+static void run(const std::shared_ptr<const CaptureOptions> options) {
     // Original single-threaded implementation
     try {
+        options->display();
+
 		// Create ring buffers for packets and output messages
         auto outputRingBuffer = std::make_shared<RingBuffer<std::string>>(options->ringBufferSize * 4);
 
