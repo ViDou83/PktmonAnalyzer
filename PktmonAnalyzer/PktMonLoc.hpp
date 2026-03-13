@@ -1157,6 +1157,88 @@ typedef enum _PKTMON_DROP_REASON
 
 } PKTMON_DROP_REASON;
 
+//*PktMonDirTag_In / PktMonDirTag_Rx / PktMonDirTag_Ingress – These all represent Receiving path of packet.
+//* PktMonDirTag_In – Reported by a upper / lower Edge of a component.Each component registers its lower or/ and upper edge.
+//* PktMonDirTag_Rx – Reported by a Network Interface.
+//* PktMonDirTag_Ingress - Reported by VmSwitch.
+//* PktMonDirTag_Out / PktMonDirTag_Tx / PktMonDirTag_Egress – They represent Sending path of packet.
+//* PktMonDirTag_out – Reported by a upper / lower Edge of a component.
+//* PktMonDirTag_Tx – Reported by a Network Interface.
+//* PktMonDirTag_Egress - Reported by VmSwitch.
+typedef enum PKTMON_DIRECTION_TAG
+{
+    PktMonDirTag_Unspecified = 0,
+    PktMonDirTag_In,
+    PktMonDirTag_Out,
+    PktMonDirTag_Rx,
+    PktMonDirTag_Tx,
+    PktMonDirTag_Ingress,
+    PktMonDirTag_Egress
+} PKTMON_DIRECTION_TAG;
+
+typedef enum _PKTMON_PACKET_TYPE
+{
+    PktMonPayload_Unknown,
+    PktMonPayload_Ethernet,
+    PktMonPayload_WiFi,
+    PktMonPayload_IP,
+    PktMonPayload_HTTP,
+    PktMonPayload_TCP,
+    PktMonPayload_UDP,
+    PktMonPayload_ARP,
+    PktMonPayload_ICMP,
+    PktMonPayload_ESP,
+    PktMonPayload_AH,
+    PktMonPayload_L4Payload,
+} PKTMON_PACKET_TYPE;
+
+static inline std::string_view pktmonPacketTypeToString(PKTMON_PACKET_TYPE type) noexcept
+{
+    switch (type)
+    {
+    case PktMonPayload_Unknown: return "PktMonPayload_Unknown";
+    case PktMonPayload_Ethernet: return "PktMonPayload_Ethernet";
+    case PktMonPayload_WiFi: return "PktMonPayload_WiFi";
+    case PktMonPayload_IP: return "PktMonPayload_IP";
+    case PktMonPayload_HTTP: return "PktMonPayload_HTTP";
+    case PktMonPayload_TCP: return "PktMonPayload_TCP";
+    case PktMonPayload_UDP: return "PktMonPayload_UDP";
+    case PktMonPayload_ARP: return "PktMonPayload_ARP";
+    case PktMonPayload_ICMP: return "PktMonPayload_ICMP";
+    case PktMonPayload_ESP: return "PktMonPayload_ESP";
+    case PktMonPayload_AH: return "PktMonPayload_AH";
+    case PktMonPayload_L4Payload: return "PktMonPayload_L4Payload";
+    default: return "Unknown";
+    }
+}
+
+inline std::ostream& operator<<(std::ostream& os, PKTMON_PACKET_TYPE type)
+{
+    os << pktmonPacketTypeToString(type);
+    return os;
+}
+
+static inline std::string_view pktmonDirectionTagToString(PKTMON_DIRECTION_TAG tag) noexcept
+{
+    switch (tag)
+    {
+    case PktMonDirTag_Unspecified:   return "PktMonDirTag_Unspecified";
+    case PktMonDirTag_In:            return "PktMonDirTag_In";
+    case PktMonDirTag_Out:           return "PktMonDirTag_Out";
+    case PktMonDirTag_Rx:            return "PktMonDirTag_Rx";
+    case PktMonDirTag_Tx:            return "PktMonDirTag_Tx";
+    case PktMonDirTag_Ingress:       return "PktMonDirTag_Ingress";
+    case PktMonDirTag_Egress:        return "PktMonDirTag_Egress";
+    default:                        return "Unknown";
+    }
+}
+
+inline std::ostream& operator<<(std::ostream& os, PKTMON_DIRECTION_TAG tag)
+{
+    os << pktmonDirectionTagToString(tag);
+    return os;
+}
+
 static inline std::string_view pktmonDropLocationToString(PKTMON_DROP_LOCATION loc) noexcept
 {
     switch (loc)

@@ -5,6 +5,7 @@
 #include <thread>
 #include <chrono>
 #include <string>
+#include <fstream>
 //local
 #include "Pktmonapi.hpp"
 #include "PktmonApiWrapper.hpp"
@@ -12,19 +13,6 @@
 #include "PktmonUtils.h"
 #include "RingBuffer.hpp"
 #include "PacketData.hpp"
-
-// Dedicated output thread - uses lock-free RingBuffer for messages
-void outputThreadFunc(const std::shared_ptr<RingBuffer<std::string>>& outputRingBuffer,
-                      std::atomic<bool>& running) {
-	//std::cout << "Output thread " << std::this_thread::get_id() << " started\n";
-    while (running.load(std::memory_order_acquire) || !outputRingBuffer->empty()) {
-        if (auto msg = outputRingBuffer->tryPop()) {
-            std::cout << *msg;
-        } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-    }
-}
 
 void printDataSources() {
     try {
@@ -50,33 +38,14 @@ void printDataSources() {
     }
 }
 
-void processPacket(const std::shared_ptr<RingBuffer<Pktmon::PacketData>>& packetRingBuffer,
-                   const std::shared_ptr<RingBuffer<std::string>>& outputRingBuffer,
-                   const std::chrono::steady_clock::time_point& endTime) {
-	//std::cout << "Consumer thread " << std::this_thread::get_id() << " started\n";
-    while (std::chrono::steady_clock::now() < endTime || !packetRingBuffer->empty()) {
-        if (auto entry = packetRingBuffer->tryPop()) {
-            // Got a packet - process it
-            std::ostringstream oss;
-            Pktmon::PacketData& packet = *entry;
-
-            packet.printMetadata(oss);
-            packet.printPacketData(oss);
-            outputRingBuffer->tryPush(std::move(oss.str()));
-        } else {
-            // Buffer empty - wait a bit before checking again (avoid busy-spin)
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
-        }
-    }
-}
-
 static void run(const std::shared_ptr<const CaptureOptions> options) {
     // Original single-threaded implementation
     try {
         options->display();
 
 		// Create ring buffers for packets and output messages
-        auto outputRingBuffer = std::make_shared<RingBuffer<std::string>>(options->ringBufferSize * 4);
+        auto fileRingBuffer = std::make_shared<RingBuffer<std::string>>(options->ringBufferSize * 8);
+        auto consoleRingBuffer = std::make_shared<RingBuffer<std::string>>(options->ringBufferSize * 8);
 
 		// Initialize API and create session
         auto& api = Pktmon::ApiManager::getInstance();
@@ -105,46 +74,118 @@ static void run(const std::shared_ptr<const CaptureOptions> options) {
         std::cout << "\n";
 		// Initialize end time for capture duration
         auto endTime = std::chrono::steady_clock::now() + std::chrono::seconds(options->durationSeconds);
+        
         // create a thread to stop the session after capture duration ends (in case session->stop() blocks)
         std::thread stopThread([session, endTime]() {
-            std::this_thread::sleep_until(endTime);
-            session->stop();
-            });
-		// Start the output thread 
-        std::atomic<bool> outputRunning(true);
-        std::thread outputThread(outputThreadFunc, outputRingBuffer, std::ref(outputRunning));
-		// Consumer threads to process packets from ring buffer
+                                    std::this_thread::sleep_until(endTime);
+                                    session->stop();
+                                });
+
+
+        // All of this would need to be moved into a factory 
+        const size_t numThreads = options->useMultiThreaded ? options->numConsumerThreads : 1;
+
+        // Start the output thread 
+        std::atomic<bool> fileRunning(true);
+        std::atomic<bool> consoleRunning(true);
+        std::atomic<bool> consumerRunning(true);
+
+        // Consumer threads to process packets from ring buffer
         std::vector<std::thread> consumerThreads;
-		const size_t numThreads = options->useMultiThreaded ? options->numConsumerThreads : 1;
-		consumerThreads.reserve(numThreads);
+        consumerThreads.reserve(numThreads);
+
+        // File writer thread - fast, batched
+        std::thread fileThread([](const std::shared_ptr<RingBuffer<std::string>>& fileRingBuffer,
+                                  const std::atomic<bool>& running) {
+                                        std::ofstream file("capture.txt");
+                                        while (running || !fileRingBuffer->empty()) {
+                                            if (auto msg = fileRingBuffer->waitPop(50)) {
+                                                file << *msg;
+                                            }
+                                        }
+                                        file.close();
+                                    },
+                                    fileRingBuffer,
+                                    std::ref(fileRunning));
+
+        // Console thread - slow, can drop
+        std::thread consoleThread([](const std::shared_ptr<RingBuffer<std::string>>& consoleRingBuffer,
+                                    const std::atomic<bool>& running) {
+                                        while (running || !consoleRingBuffer->empty()) {
+                                            if (auto msg = consoleRingBuffer->waitPop(50)) {
+                                                std::cout << *msg;
+                                            }
+                                        }
+                                    },
+                                    consoleRingBuffer,
+                                    std::ref(consoleRunning));
+
         for (size_t i = 0; i < numThreads; i++) {
-            consumerThreads.emplace_back(processPacket, packetRingBuffer, outputRingBuffer, endTime);
+            // Start consumer thread to process packets
+            consumerThreads.emplace_back(
+                    [](const std::shared_ptr<RingBuffer<Pktmon::PacketData>>& packetRingBuffer,
+                       const std::shared_ptr<RingBuffer<std::string>>& fileRingBuffer,
+                       const std::shared_ptr<RingBuffer<std::string>>& consoleRingBuffer,
+                       const std::atomic<bool>& running) {
+                            while (running.load(std::memory_order_acquire) || !packetRingBuffer->empty()) {
+                                if (auto entry = packetRingBuffer->waitPop()) {
+                                    // Got a packet - process it
+                                    std::ostringstream oss;
+                                    Pktmon::PacketData& packet = *entry;
+
+                                    packet.printMetadata(oss);
+                                    packet.printPacketData(oss);
+
+                                    fileRingBuffer->tryPush(oss.str());
+                                    consoleRingBuffer->tryPush(std::move(oss.str()));
+                                } 
+                            }
+                    },
+                    packetRingBuffer,
+                    fileRingBuffer,
+                    consoleRingBuffer,
+                    std::ref(consumerRunning));
         }
+
 		// Wait for stop thread to finish (ensures session is stopped)
         if (stopThread.joinable()) {
             stopThread.join();
 		}
+
+        consumerRunning.store(false, std::memory_order_release);
+        packetRingBuffer->signalAll(static_cast<int>(numThreads));
+
 		// Wait for capture duration to elapse
         for (auto& thread : consumerThreads) {
             if (thread.joinable()) {
                 thread.join();
             }
         }
-        // Stop the output thread
-		outputRunning.store(false, std::memory_order_release);
-		// Wait for output thread to finish processing remaining messages
-        if (outputThread.joinable()) {
-            outputThread.join();
+
+		// Stop output threads
+        fileRunning.store(false, std::memory_order_release);
+        fileRingBuffer->signalAll(1);
+        if (fileThread.joinable()) {
+            fileThread.join();
         }
+		consoleRunning.store(false, std::memory_order_release);
+		consoleRingBuffer->signalAll(1);
+        if (consoleThread.joinable()) {
+            consoleThread.join();
+		}
+
 		// Capture complete - print summary
 		std::cout << "\n";
 		std::cout << "**** Capture complete ****\n";
         std::cout << "\n";
+
 		// print ring buffers statistics
 		std::cout << "=== Packet Ring Buffer ===\n";
 		packetRingBuffer->printStatistics();
-		std::cout << "\n=== Output Ring Buffer ===\n";
-		outputRingBuffer->printStatistics();
+		std::cout << "\n=== File Ring Buffer ===\n";
+        fileRingBuffer->printStatistics();
+        std::cout << "\n=== Console output Ring Buffer ===\n";
+        consoleRingBuffer->printStatistics();
 		std::cout << "\n=== Capture Statistics ===\n";
 		ringBufferHandler->printStatistics();
 		// capture complete - print statistics
@@ -203,10 +244,13 @@ int wmain(int argc, wchar_t* argv[]) {
         try {
             options->durationSeconds = std::stoi(argv[2]);
             
-            if (options->durationSeconds <= 0) {
+            if (options->durationSeconds < 0) {
                 std::wcerr << L"Error: Duration must be positive\n";
                 throw std::invalid_argument("Invalid duration");
-            }
+            } else if (options->durationSeconds == 0) {
+				// Infinite capture - set to max int value (approx 68 years) to avoid overflow issues in time calculations
+                options->durationSeconds = INT32_MAX;
+			}
             
             // Parse optional parameters
             for (int i = 3; i < argc; i++) {

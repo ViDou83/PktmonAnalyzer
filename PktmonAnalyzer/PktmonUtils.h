@@ -46,14 +46,14 @@ inline std::string wstringToString(const std::wstring& wstr) {
 
 // Capture options structure passed from main application to packet handlers for customized behavior
 struct CaptureOptions {
-    int durationSeconds = 10;
+    int durationSeconds = 30;
     UINT16 truncationSize = 0;
     UINT16 displayLength = 0; // Number of bytes to display in hex dump (0 = no limit)
     bool showDetailedMetadata = false;
     bool droppedOnly = false;
     bool useMultiThreaded = true;
 	size_t numConsumerThreads = std::thread::hardware_concurrency() > 0 ? std::thread::hardware_concurrency()/2 : 1; // Default to half of CPU cores or 4 if undetectable
-    size_t ringBufferSize = 2 * 1024;
+    size_t ringBufferSize = 16 * 1024;
 
     void display() const {
         std::cout << "Capture Options:\n"

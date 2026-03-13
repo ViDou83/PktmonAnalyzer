@@ -63,23 +63,28 @@ public:
 
         // Common: Timestamp always shown
         oss << std::format("{:<18}{}\n", "Timestamp:", formatTimestamp(metadata.TimeStamp));
+        oss << std::format("{:<18}{}\n", "Processor:", metadata.Processor);
+        oss << std::format("{:<18}{}\n", "Packet Group ID:", metadata.PktGroupId);
+
+        const auto packetTypeStr = pktmonPacketTypeToString(static_cast<PKTMON_PACKET_TYPE>(metadata.PacketType));
+        const auto directionStr = pktmonDirectionTagToString(static_cast<PKTMON_DIRECTION_TAG>(metadata.DirectionName));
+
+        oss << std::format("{:<18}{}\n", "Packet Type:", packetTypeStr);
+		oss << std::format("{:<18}{}\n", "Packet Direction:", directionStr);
 
         if (m_captureOptions->showDetailedMetadata) {
-            oss << std::format("{:<18}{}\n", "Packet Group ID:", metadata.PktGroupId);
             oss << std::format("{:<18}{}\n", "Packet Count:", metadata.PktCount);
             oss << std::format("{:<18}{}\n", "Appearance Count:", metadata.AppearanceCount);
-            oss << std::format("{:<18}{}\n", "Direction:", metadata.DirectionName);
-            oss << std::format("{:<18}{}\n", "Packet Type:", metadata.PacketType);
-        } else {
-            oss << std::format("{:<18}{}\n", "Packet:", metadata.PktGroupId);
         }
 
-        oss << std::format("{:<18}{}\n", "Processor:", metadata.Processor);
         if (m_dataSourceCache->size()) {
             std::string componentName = m_dataSourceCache->getComponentName(metadata.ComponentId);
+            std::string EdgeName = m_dataSourceCache->getComponentName(metadata.EdgeId);
             oss << std::format("{:<18}{} (ID:{})\n", "Component:", componentName, metadata.ComponentId);
+            oss << std::format("{:<18}{} (ID:{})\n", "Edge:", EdgeName, metadata.EdgeId);
         } else {
             oss << std::format("{:<18}{}\n", "Component:", metadata.ComponentId);
+            oss << std::format("{:<18}{}\n", "Edge:", metadata.EdgeId);
         }
 
         // Drop info (if applicable)
