@@ -166,7 +166,6 @@ private:
     std::shared_ptr<DataSourceCache> m_dataSourceCache;
 
     // Function pointers
-
     using PacketMonitorAddCaptureConstraint = HRESULT(WINAPI*)(HANDLE, PACKETMONITOR_PROTOCOL_CONSTRAINT *);
 	using PacketMonitorAddSingleDataSourceToSession = HRESULT(WINAPI*)(HANDLE, const PACKETMONITOR_DATA_SOURCE_SPECIFICATION*);
 	using PacketMonitorAttachOutputToSession = HRESULT(WINAPI*)(HANDLE, void*);
