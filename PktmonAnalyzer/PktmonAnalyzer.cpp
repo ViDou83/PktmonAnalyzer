@@ -98,8 +98,8 @@ static void run(const std::shared_ptr<const CaptureOptions> options) {
         std::thread fileThread([](const std::shared_ptr<RingBuffer<std::string>>& fileRingBuffer,
                                   const std::atomic<bool>& running) {
                                         std::ofstream file("capture.txt");
-                                        while (running || !fileRingBuffer->empty()) {
-                                            if (auto msg = fileRingBuffer->waitPop(50)) {
+                                        while (running.load(std::memory_order_relaxed) || !fileRingBuffer->empty()) {
+                                            if (auto msg = fileRingBuffer->waitPop()) {
                                                 file << *msg;
                                             }
                                         }
@@ -111,8 +111,8 @@ static void run(const std::shared_ptr<const CaptureOptions> options) {
         // Console thread - slow, can drop
         std::thread consoleThread([](const std::shared_ptr<RingBuffer<std::string>>& consoleRingBuffer,
                                     const std::atomic<bool>& running) {
-                                        while (running || !consoleRingBuffer->empty()) {
-                                            if (auto msg = consoleRingBuffer->waitPop(50)) {
+                                        while (running.load(std::memory_order_relaxed) || !consoleRingBuffer->empty()) {
+                                            if (auto msg = consoleRingBuffer->waitPop()) {
                                                 std::cout << *msg;
                                             }
                                         }
@@ -127,17 +127,19 @@ static void run(const std::shared_ptr<const CaptureOptions> options) {
                        const std::shared_ptr<RingBuffer<std::string>>& fileRingBuffer,
                        const std::shared_ptr<RingBuffer<std::string>>& consoleRingBuffer,
                        const std::atomic<bool>& running) {
-                            while (running.load(std::memory_order_acquire) || !packetRingBuffer->empty()) {
+                            std::string buf;
+                            while (running.load(std::memory_order_relaxed) || !packetRingBuffer->empty()) {
                                 if (auto entry = packetRingBuffer->waitPop()) {
                                     // Got a packet - process it
-                                    std::ostringstream oss;
+                                    buf.clear();
                                     Pktmon::PacketData& packet = *entry;
 
-                                    packet.printMetadata(oss);
-                                    packet.printPacketData(oss);
+                                    packet.printMetadata(buf);
+                                    packet.printPacketData(buf);
 
-                                    fileRingBuffer->tryPush(oss.str());
-                                    consoleRingBuffer->tryPush(std::move(oss.str()));
+                                    fileRingBuffer->tryPush(buf);
+                                    consoleRingBuffer->tryPush(std::move(buf));
+                                    buf = {}; // reset after move
                                 } 
                             }
                     },
@@ -152,7 +154,7 @@ static void run(const std::shared_ptr<const CaptureOptions> options) {
             stopThread.join();
 		}
 
-        consumerRunning.store(false, std::memory_order_release);
+        consumerRunning.store(false, std::memory_order_relaxed);
         packetRingBuffer->signalAll(static_cast<int>(numThreads));
 
 		// Wait for capture duration to elapse
@@ -163,12 +165,12 @@ static void run(const std::shared_ptr<const CaptureOptions> options) {
         }
 
 		// Stop output threads
-        fileRunning.store(false, std::memory_order_release);
+        fileRunning.store(false, std::memory_order_relaxed);
         fileRingBuffer->signalAll(1);
         if (fileThread.joinable()) {
             fileThread.join();
         }
-		consoleRunning.store(false, std::memory_order_release);
+		consoleRunning.store(false, std::memory_order_relaxed);
 		consoleRingBuffer->signalAll(1);
         if (consoleThread.joinable()) {
             consoleThread.join();

@@ -45,14 +45,15 @@ public:
     RingBuffer& operator=(const RingBuffer&) = delete;
 
     bool tryPush(const T& t) {
-        return push(t);
+        T copy(t);
+        return push(std::move(copy));
     }
 
     bool tryPush(T&& t) {
         return push(std::move(t));
     }
 
-    // Single producer only
+    // Multi-producers
     bool push(T&& v) {
         for (;;) {
             std::size_t h = head_.load(std::memory_order_relaxed);
@@ -75,7 +76,10 @@ public:
                 buf_[h & mask_].data = std::move(v); 
                 buf_[h & mask_].ready.store(true, std::memory_order_release); // publish slot ready
                 stats_.totalPushed.fetch_add(1, std::memory_order_relaxed);
-                SetEvent(hEvent_); // signal one waiting consumer
+                // Only signal when buffer transitions from empty — avoids kernel syscall on every push
+                if (h == t) {
+                    SetEvent(hEvent_);
+                }
                 return true;
             }
             // CAS failed: 'h' updated to latest head, loop and retry
@@ -83,20 +87,21 @@ public:
     }
 
 
-    // Multi-consumer
+    // Multi-consumers
     std::optional<T> tryPop() {
         for (;;) {
             std::size_t t = tail_.load(std::memory_order_relaxed);
             const std::size_t h = head_.load(std::memory_order_acquire);
             
-            if (t == h) {
+            if (t == h || !buf_[t & mask_].ready.load(std::memory_order_acquire)) {
                 return std::nullopt; // empty
             }
 
-            if (!buf_[t & mask_].ready.load(std::memory_order_acquire))
-            {
-                continue;
-            }
+            //if (!buf_[t & mask_].ready.load(std::memory_order_acquire))
+            //{
+            //    std::thread::yield(); // Slot not ready yet, producer hasn't published, yield and retry
+            //    continue;
+            //}
 
             // Attempt to claim slot t
             if (tail_.compare_exchange_weak(t, t + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
@@ -117,8 +122,13 @@ public:
 
         // Wait for producer signal or timeout
         WaitForSingleObject(hEvent_, timeoutMs);
-
-        return tryPop();
+        for (int i = 0; i < 3; ++i) {
+            if (auto result = tryPop()) {
+                return result;
+            }
+            YieldProcessor();
+        }
+        return std::nullopt;
     }
 
     // Wake all waiting consumers (for shutdown)

@@ -83,9 +83,14 @@ protected:
         concurrency::concurrent_unordered_map<uint32_t, std::shared_ptr<std::atomic<uint64_t>>>& m,
         uint32_t key)
     {
-        // insert a ptr if missing; safe because shared_ptr is copy/move
-        auto [it, inserted] = m.insert({ key, std::make_shared<std::atomic<uint64_t>>(0) });
-        return *(it->second);
+        // Fast path: key already exists - no allocation needed
+        auto it = m.find(key);
+        if (it != m.end()) {
+            return *(it->second);
+        }
+        // Slow path: insert a ptr if missing; safe because shared_ptr is copy/move
+        auto [ins_it, inserted] = m.insert({ key, std::make_shared<std::atomic<uint64_t>>(0) });
+        return *(ins_it->second);
     }
 
     std::shared_ptr<const CaptureOptions> m_captureOptions;

@@ -246,7 +246,7 @@ RealtimeStream::RealtimeStream(std::shared_ptr<Session> session,
     , m_truncationSize(truncationSize)
     , m_ringBufferSize(ringBufferSize)
 {
-	m_ringBuffer = std::make_shared<RingBuffer<PacketData>>(ringBufferSize);
+	m_ringBuffer = std::make_shared<RingBuffer<PacketData>>(ringBufferSize*m_truncationSize);
 }
 
 RealtimeStream::~RealtimeStream() {

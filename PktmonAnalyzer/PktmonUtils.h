@@ -3,9 +3,10 @@
 #include <windows.h>       // Add this - needed for FILETIME, SYSTEMTIME, etc.
 #include <basetsd.h>
 #include <string>          // Add this - for std::string, std::wstring
-#include <sstream>         // Add this - for std::ostringstream  
+#include <format>          // For std::format (C++20)
 #include <iomanip>         // Add this - for std::setfill, std::setw
 #include <mutex>           // Add this - for std::mutex
+#include <atomic>
 #include <unordered_map>   // Add this - for std::unordered_map
 #include "Pktmonapi.hpp"   // Add this - for PACKETMONITOR_DATA_SOURCE_KIND, etc.
 
@@ -18,16 +19,9 @@ inline std::string formatTimestamp(const LARGE_INTEGER& timestamp) {
 
     SYSTEMTIME st;
     if (FileTimeToSystemTime(&ft, &st)) {
-        std::ostringstream oss;
-        oss << std::setfill('0')
-            << std::setw(4) << st.wYear << "-"
-            << std::setw(2) << st.wMonth << "-"
-            << std::setw(2) << st.wDay << " "
-            << std::setw(2) << st.wHour << ":"
-            << std::setw(2) << st.wMinute << ":"
-            << std::setw(2) << st.wSecond << "."
-            << std::setw(3) << st.wMilliseconds;
-        return oss.str();
+        return std::format("{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:03d}",
+            st.wYear, st.wMonth, st.wDay,
+            st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
     }
     return "Invalid timestamp";
 }
@@ -47,7 +41,7 @@ inline std::string wstringToString(const std::wstring& wstr) {
 // Capture options structure passed from main application to packet handlers for customized behavior
 struct CaptureOptions {
     int durationSeconds = 30;
-    UINT16 truncationSize = 0;
+    UINT16 truncationSize = 128;
     UINT16 displayLength = 0; // Number of bytes to display in hex dump (0 = no limit)
     bool showDetailedMetadata = false;
     bool droppedOnly = false;
@@ -66,7 +60,7 @@ struct CaptureOptions {
         if (useMultiThreaded) {
             std::cout << "  Consumer Threads: " << numConsumerThreads << "\n";
         }
-        std::cout << "  Ring Buffer Size: " << ringBufferSize << "\n";
+        std::cout << "  Ring Buffer Size: " << ringBufferSize*truncationSize << "\n";
 	}
 };
 
@@ -95,6 +89,8 @@ public:
         if (spec.SecondaryId != 0) {
             m_componentMap[spec.SecondaryId] = info;
         }
+
+        m_hasSources.store(true, std::memory_order_release);
     }
 
     bool lookup(UINT32 componentId, DataSourceInfo& outInfo) const {
@@ -128,6 +124,11 @@ public:
         m_componentMap.clear();
     }
 
+    // Lock-free check for hot path - avoids mutex contention on every packet
+    bool hasSources() const noexcept {
+        return m_hasSources.load(std::memory_order_acquire);
+    }
+
     size_t size() const {
         std::lock_guard<std::mutex> lock(m_mutex);
         return m_componentMap.size();
@@ -136,4 +137,5 @@ public:
 private:
     mutable std::mutex m_mutex;
     std::unordered_map<UINT32, DataSourceInfo> m_componentMap;
+    std::atomic<bool> m_hasSources{ false };
 };
