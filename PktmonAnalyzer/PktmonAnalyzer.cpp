@@ -42,6 +42,7 @@ static void run(const std::shared_ptr<const CaptureOptions> options) {
     // Original single-threaded implementation
     try {
         options->display();
+		std::this_thread::sleep_for(std::chrono::seconds(2)); // Pause before starting capture
 
 		// Create ring buffers for packets and output messages
         auto fileRingBuffer = std::make_shared<RingBuffer<std::string>>(options->ringBufferSize * 8);
@@ -139,7 +140,7 @@ static void run(const std::shared_ptr<const CaptureOptions> options) {
 
                                     fileRingBuffer->tryPush(buf);
                                     consoleRingBuffer->tryPush(std::move(buf));
-                                    buf = {}; // reset after move
+                                    buf.clear();
                                 } 
                             }
                     },

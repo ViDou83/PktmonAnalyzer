@@ -55,6 +55,8 @@ public:
 
     // Multi-producers
     bool push(T&& v) {
+        int spins = 0;
+
         for (;;) {
             std::size_t h = head_.load(std::memory_order_relaxed);
             const std::size_t t = tail_.load(std::memory_order_acquire); // observe consumer progress
@@ -71,8 +73,10 @@ public:
                 return false;
             }
 
-			// CAS to claim slot 'h'
-            if (head_.compare_exchange_weak(h, h + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+            // CAS to claim slot 'h'
+            if (head_.compare_exchange_weak(h, h + 1,
+                                            std::memory_order_acq_rel,
+                                            std::memory_order_relaxed)) {
                 buf_[h & mask_].data = std::move(v); 
                 buf_[h & mask_].ready.store(true, std::memory_order_release); // publish slot ready
                 stats_.totalPushed.fetch_add(1, std::memory_order_relaxed);
@@ -82,7 +86,15 @@ public:
                 }
                 return true;
             }
+
             // CAS failed: 'h' updated to latest head, loop and retry
+            // Backoff
+            if (++spins < 10) {
+                YieldProcessor();
+            } else {
+				std::this_thread::yield();
+                spins = 0;
+            }
         }
     }
 
@@ -93,20 +105,21 @@ public:
             std::size_t t = tail_.load(std::memory_order_relaxed);
             const std::size_t h = head_.load(std::memory_order_acquire);
             
-            if (t == h || !buf_[t & mask_].ready.load(std::memory_order_acquire)) {
+            // empty
+            if (t == h) {
                 return std::nullopt; // empty
             }
 
-            //if (!buf_[t & mask_].ready.load(std::memory_order_acquire))
-            //{
-            //    std::thread::yield(); // Slot not ready yet, producer hasn't published, yield and retry
-            //    continue;
-            //}
+            if (!buf_[t & mask_].ready.load(std::memory_order_acquire))
+            {
+                YieldProcessor(); // producer hasn't published data yet, wait and retry
+                continue;
+            }
 
             // Attempt to claim slot t
             if (tail_.compare_exchange_weak(t, t + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
                 T out = std::move(buf_[t & mask_].data);
-				buf_[t & mask_].ready.store(false, std::memory_order_release); // mark slot empty
+                buf_[t & mask_].ready.store(false, std::memory_order_release); // mark slot empty
                 stats_.totalPopped.fetch_add(1, std::memory_order_relaxed);
                 return out;
             }
@@ -157,14 +170,13 @@ public:
 
 private:
     struct slot 
-        {
+    {
         T data;
         alignas(std::hardware_destructive_interference_size) std::atomic<bool> ready{ false };
-	};  
-
+	};
+    std::vector<slot> buf_;
     const std::size_t cap_;
     const std::size_t mask_;
-    std::vector<slot> buf_;
 
     // head: only producer writes, consumers read
     alignas(std::hardware_destructive_interference_size) std::atomic<std::size_t> head_{ 0 };

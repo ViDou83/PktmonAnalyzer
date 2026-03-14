@@ -30,7 +30,7 @@ public:
     {
         m_packetLength = (data.DataSize <= m_captureOptions->truncationSize) ? data.DataSize : m_captureOptions->truncationSize;
         
-		m_packet.reserve(m_packetLength);
+        m_packet.reserve(m_packetLength);
 
         std::copy(static_cast<const std::byte*>(data.Data) + data.PacketOffset,
             static_cast<const std::byte*>(data.Data) + data.PacketOffset + m_packetLength,
@@ -64,44 +64,62 @@ public:
     
     void printMetadata(std::string& oss){
         const auto metadata = getMetadata();
+        
         constexpr std::string_view separator = "======================================================\n";
+        
+        //reserve enough space in the output string to avoid multiple reallocations during append
+        oss.reserve(oss.size() + 256 + sizeof(separator));
 
         oss.append(separator);
 
         // Common: Timestamp always shown
         formatTimestampInto(oss, metadata.TimeStamp);
-        std::format_to(std::back_inserter(oss),
+
+		oss.append("Processor: " + std::to_string(metadata.Processor) + "\n");
+		oss.append("PacketGroupID: " + std::to_string(metadata.PktGroupId) + "\n");
+        /*std::format_to(std::back_inserter(oss),
             "{:<18}{}\n{:<18}{}\n",
             "Processor:", metadata.Processor,
-            "Packet Group ID:", metadata.PktGroupId);
+            "Packet Group ID:", metadata.PktGroupId);*/
 
         const auto packetTypeStr = pktmonPacketTypeToString(static_cast<PKTMON_PACKET_TYPE>(metadata.PacketType));
         const auto directionStr = pktmonDirectionTagToString(static_cast<PKTMON_DIRECTION_TAG>(metadata.DirectionName));
-
-        std::format_to(std::back_inserter(oss),
+ /*       std::format_to(std::back_inserter(oss),
             "{:<18}{}\n{:<18}{}\n",
             "Packet Type:", packetTypeStr,
-            "Packet Direction:", directionStr);
+            "Packet Direction:", directionStr);*/
+        oss.append("Packet Type: ");
+		oss.append(packetTypeStr);
+		oss.append("\n");
+		oss.append("Packet Direction: ");
+		oss.append(directionStr);
+		oss.append("\n");
 
         if (m_captureOptions->showDetailedMetadata) {
-            std::format_to(std::back_inserter(oss),
+            /*std::format_to(std::back_inserter(oss),
                 "{:<18}{}\n{:<18}{}\n",
                 "Packet Count:", metadata.PktCount,
-                "Appearance Count:", metadata.AppearanceCount);
+                "Appearance Count:", metadata.AppearanceCount);*/
+			oss.append("Packet Count: " + std::to_string(metadata.PktCount) + "\n");
+			oss.append("Appearance Count: " + std::to_string(metadata.AppearanceCount) + "\n");
         }
 
         if (m_dataSourceCache->hasSources()) {
             std::string componentName = m_dataSourceCache->getComponentName(metadata.ComponentId);
             std::string EdgeName = m_dataSourceCache->getComponentName(metadata.EdgeId);
-            std::format_to(std::back_inserter(oss),
-                "{:<18}{} (ID:{})\n{:<18}{} (ID:{})\n",
-                "Component:", componentName, metadata.ComponentId,
-                "Edge:", EdgeName, metadata.EdgeId);
+            //std::format_to(std::back_inserter(oss),
+            //    "{:<18}{} (ID:{})\n{:<18}{} (ID:{})\n",
+            //    "Component:", componentName, metadata.ComponentId,
+            //    "Edge:", EdgeName, metadata.EdgeId);
+			oss.append("Component: " + componentName + " (ID:" + std::to_string(metadata.ComponentId) + ")\n");
+			oss.append("Edge: " + EdgeName + " (ID:" + std::to_string(metadata.EdgeId) + ")\n");
         } else {
-            std::format_to(std::back_inserter(oss),
-                "{:<18}{}\n{:<18}{}\n",
-                "Component:", metadata.ComponentId,
-                "Edge:", metadata.EdgeId);
+            //std::format_to(std::back_inserter(oss),
+            //    "{:<18}{}\n{:<18}{}\n",
+            //    "Component:", metadata.ComponentId,
+            //    "Edge:", metadata.EdgeId);
+			oss.append("Component: " + std::to_string(metadata.ComponentId) + "\n");
+			oss.append("Edge: " + std::to_string(metadata.EdgeId) + "\n");
         }
 
         // Drop info (if applicable)
@@ -117,28 +135,58 @@ public:
         oss.append(separator);
     }
 
+    static inline void append_hex_u16(std::string& out, unsigned v) {
+        static constexpr char hex[] = "0123456789ABCDEF";
+        out.push_back(hex[(v >> 12) & 0xF]);
+        out.push_back(hex[(v >> 8) & 0xF]);
+        out.push_back(hex[(v >> 4) & 0xF]);
+        out.push_back(hex[(v >> 0) & 0xF]);
+    }
+
+    static inline void append_hex_byte(std::string& out, unsigned char b) {
+        static constexpr char hex[] = "0123456789ABCDEF";
+        out.push_back(hex[(b >> 4) & 0xF]);
+        out.push_back(hex[b & 0xF]);
+    }
+
     void printPacketData(std::string& oss) {
-        oss.append("Packet: " + m_packetLength);
-		oss.append(" bytes\n");
-
+        
         auto displayLength = m_captureOptions->displayLength == 0 ? m_packetLength : std::min<size_t>(static_cast<size_t>(m_captureOptions->displayLength), m_packetLength);
+        auto numberOfLines = displayLength  / 16;
+        auto remainingBytes = displayLength % 16;
 
-        for (size_t i = 0; i < displayLength; ++i) {
-            if (i % 16 == 0) {
-                std::format_to(std::back_inserter(oss),
-                    "{:04X}: ",
-					static_cast<unsigned>(i));
+		//resize the output string to avoid multiple reallocations during append 
+		// (estimate 3 chars per byte) + some extra 
+		oss.reserve(oss.size() + displayLength * 3 + 64);
+        
+        oss.append("Packet: " + std::to_string(m_packetLength) + " bytes\n");
+
+        for (size_t i = 0; i < numberOfLines; i++) {
+        size_t j = i * 16;
+            append_hex_u16(oss, static_cast<unsigned>(j));
+            oss.append(": ");
+            // 16 bytes
+            for (int k = 0; k < 16; k++) {
+                append_hex_byte(oss, static_cast<unsigned char>(m_packet[j + k]));
+                if (k != 15) oss.push_back(' ');
             }
-            std::format_to(std::back_inserter(oss),
-                    "{:02X} ",
-				    static_cast<unsigned char>(m_packet[i]));
-            if ((i + 1) % 16 == 0) {
-                oss.append("\n");
+
+            oss.push_back('\n');
+        }
+
+        // remaining bytes
+        if (remainingBytes > 0) {
+        size_t j = numberOfLines * 16;
+            append_hex_u16(oss, static_cast<unsigned>(numberOfLines) * 16);
+            oss.append(": ");
+ 
+            for (int k = 0; k < remainingBytes; k++) {
+                append_hex_byte(oss, static_cast<unsigned char>(m_packet[j + k]));
+                if (k != remainingBytes) oss.push_back(' ');
             }
         }
         oss.append("\n");
     }
-
 
 private:
     std::vector<std::byte> m_packet;
@@ -158,10 +206,10 @@ private:
 
         SYSTEMTIME st;
         if (FileTimeToSystemTime(&ft, &st)) {
-            std::format_to(std::back_inserter(oss),
-                "{:<18}{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:03d}\n",
+             //display hour:minute:second.millisecond only for easier reading in console output, full timestamp with date is in separate field above
+             std::format_to(std::back_inserter(oss),
+                 "{:<18}{:02d}:{:02d}:{:02d}.{:03d}\n",
                 "Timestamp:",
-                st.wYear, st.wMonth, st.wDay,
                 st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
         } else {
             oss.append("Timestamp:        Invalid timestamp\n");
