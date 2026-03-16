@@ -55,10 +55,38 @@ Packets are written to both:
 | `PktmonApiWrapper.hpp` | `IPacketHandler` - Base interface with stats tracking.<br>`ApiManager` - Singleton for DLL loading and API init.<br>`Session` - Capture session management.<br>`RealtimeStream` - Stream creation and callbacks.<br>`PktmonException` - Custom exception with HRESULT. |
 | `PktmonApiWrapper.cpp` | Implementation of `ApiManager`, `Session`, `RealtimeStream`. DLL function resolution, session lifecycle. |
 
-### Utilities & Definitions
+## Usage
+Use -? to display usage information.
 
-| File | Purpose |
-|------|---------|
-| `PktmonUtils.h` | `CaptureOptions` - CLI options struct.<br>`DataSourceCache` - Thread-safe component name cache.<br>`formatTimestamp()` - FILETIME to string.<br>`wstringToString()` - Wide to UTF-8 conversion. |
-| `Pktmonapi.hpp` | Pktmon API structs and constants: `PACKETMONITOR_STREAM_DATA_DESCRIPTOR`, `PACKETMONITOR_STREAM_METADATA`, etc. |
-| `PktMonLoc.hpp` | Enums and string converters for drop reasons (`PKTMON_DROP_REASON`), locations (`PKTMON_DROP_LOCATION`), packet types, directions. |
+Usage:
+      -enum                    : Enumerate data sources
+      
+      -capture <seconds>       : Capture packets for specified duration
+      
+      -truncate <bytes>        : Truncate captured packets to specified size (0 = no truncation, max 65535)
+                                  
+      -display <bytes>         : Number of bytes to display in hex dump (0 = no limit, max 65535)
+      
+      -detailed                : Show detailed packet information
+      
+      -nometadata              : Hide metadata in output
+      
+      -drop                    : Show only dropped packets
+      
+      -threads <count>         : Number of consumer threads (enables multi-threaded mode
+      
+      -bufsize <count>         : Ring buffer size (default: 2K)
+
+Examples:
+      PktmonAnalyzer.exe
+      
+      PktmonAnalyzer.exe -enum
+      
+      PktmonAnalyzer.exe -capture 30
+      
+      PktmonAnalyzer.exe -capture 60 -threads 4
+      
+      PktmonAnalyzer.exe -capture 60 -threads 4 -bufsize 50000
+  
+      PktmonAnalyzer.exe -capture 60 -drop -detailed -threads 2
+  
