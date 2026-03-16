@@ -33,16 +33,16 @@ namespace Pktmon {
             // Take ownership of packet data (copy into owned buffer)
             PacketData packetData(data, m_captureOptions, m_dataSourceCache);
 
-			m_packetCount.fetch_add(1, std::memory_order_relaxed);
-			m_totalBytes.fetch_add(data.PacketLength, std::memory_order_relaxed);
-			m_missedWrites.fetch_add(data.MissedPacketWriteCount, std::memory_order_relaxed);
-			m_missedReads.fetch_add(data.MissedPacketReadCount, std::memory_order_relaxed);
+            m_packetCount.fetch_add(1, std::memory_order_relaxed);
+            m_totalBytes.fetch_add(data.PacketLength, std::memory_order_relaxed);
+            m_missedWrites.fetch_add(data.MissedPacketWriteCount, std::memory_order_relaxed);
+            m_missedReads.fetch_add(data.MissedPacketReadCount, std::memory_order_relaxed);
 
             auto metadata = packetData.getMetadata();
             get_or_create_counter(m_componentStats, metadata.ComponentId).fetch_add(1, std::memory_order_relaxed);
 
             if (metadata.DropReason != 0) {
-				m_droppedPackets.fetch_add(1, std::memory_order_relaxed);
+                m_droppedPackets.fetch_add(1, std::memory_order_relaxed);
                 get_or_create_counter(m_dropReasons, metadata.DropReason).fetch_add(1, std::memory_order_relaxed);
             }
 
