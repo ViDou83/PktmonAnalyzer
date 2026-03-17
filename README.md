@@ -1,6 +1,12 @@
 # PktmonAnalyzer
 
-A C++ Windows packet capture prototype (don't use in production) tool using built on top of the Windows Packet Monitor (Pktmon) API. Designed for real-time network traffic monitoring with multi-threaded processing.
+[![CodeFactor](https://www.codefactor.io/repository/github/vidou83/pktmonanalyzer/badge)](https://www.codefactor.io/repository/github/vidou83/pktmonanalyzer)
+[![CodeQL](https://github.com/ViDou83/PktmonAnalyzer/actions/workflows/codeql.yml/badge.svg)](https://github.com/ViDou83/PktmonAnalyzer/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Language](https://img.shields.io/badge/language-C%2B%2B20-blue)
+
+A C++ Windows packet capture prototype (don't use in production) tool built on top of the Windows Packet Monitor (Pktmon) API. Designed for real-time network traffic monitoring with multi-threaded processing.
 
 ## Features
 
